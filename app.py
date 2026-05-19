@@ -993,180 +993,150 @@ def compute_atr(h, period=14):
     return h['TR'].rolling(period).mean()
 
 
-def quick_signal_score(h, i):
-    """과거 시점 i 에서의 매수 시그널 점수 (0~5) - AI 점수 간략판"""
-    if i < 60: return 0
-    score = 0
-    curr = h['Close'].iloc[i]
-    ma20 = h['Close'].iloc[max(0,i-19):i+1].mean()
-    ma60 = h['Close'].iloc[max(0,i-59):i+1].mean()
-    if curr > ma20: score += 1
-    if ma20 > ma60: score += 1
-    if 'RSI' in h.columns and not pd.isna(h['RSI'].iloc[i]):
-        rsi = h['RSI'].iloc[i]
-        if 30 < rsi < 60: score += 1
-        if rsi < 35: score += 1
-    if 'MACD' in h.columns and 'MACD_sig' in h.columns:
-        if not pd.isna(h['MACD'].iloc[i]) and h['MACD'].iloc[i] > h['MACD_sig'].iloc[i]:
-            score += 1
-    if i >= 20:
-        vol_ma = h['Volume'].iloc[i-19:i+1].mean()
-        if vol_ma > 0 and h['Volume'].iloc[i] > vol_ma * 1.2: score += 1
-    return score
+def compute_bb(h, period=20, std=2):
+    """볼린저밴드 위치 (0~1)"""
+    ma = h['Close'].rolling(period).mean()
+    sd = h['Close'].rolling(period).std()
+    upper = ma + sd * std
+    lower = ma - sd * std
+    pos = (h['Close'] - lower) / (upper - lower)
+    return pos
 
 
-def run_backtest(hist, params, start_idx=None, end_idx=None):
-    """단일 종목 백테스트"""
+def find_similar_patterns(hist, indicators_used, lookforward_days=[1, 5, 10]):
+    """현재 보조지표 상태와 유사한 과거 시점 검색
+    indicators_used: 사용할 지표 리스트 ['BB', 'RSI', 'MACD', 'OBV']
+    """
     h = hist.copy()
-    if 'ATR' not in h.columns:
-        h['ATR'] = compute_atr(h)
-    if start_idx is None: start_idx = 60
-    if end_idx is None: end_idx = len(h) - 1
+    if len(h) < 200: return None
 
-    trades = []
-    capital = 10000
-    pos = None
+    # 지표 계산
+    h['BB_pos'] = compute_bb(h)
+    delta = h['Close'].diff()
+    gain = delta.where(delta > 0, 0).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    h['RSI_v'] = 100 - (100 / (1 + gain / loss))
+    e12 = h['Close'].ewm(span=12, adjust=False).mean()
+    e26 = h['Close'].ewm(span=26, adjust=False).mean()
+    h['MACD_v'] = e12 - e26
+    h['MACD_sig_v'] = h['MACD_v'].ewm(span=9, adjust=False).mean()
+    h['MACD_diff'] = h['MACD_v'] - h['MACD_sig_v']
+    # OBV
+    direction = np.sign(h['Close'].diff().fillna(0))
+    h['OBV_v'] = (direction * h['Volume']).cumsum()
+    h['OBV_chg'] = h['OBV_v'].pct_change(20) * 100  # 20일 변화율
 
-    for i in range(start_idx, end_idx):
-        if pd.isna(h['ATR'].iloc[i]): continue
-        curr_p = h['Close'].iloc[i]
-        atr = h['ATR'].iloc[i]
+    # 현재 시점 값
+    cur_idx = len(h) - 1
+    cur_state = {}
+    if 'BB' in indicators_used and not pd.isna(h['BB_pos'].iloc[cur_idx]):
+        cur_state['BB'] = h['BB_pos'].iloc[cur_idx]
+    if 'RSI' in indicators_used and not pd.isna(h['RSI_v'].iloc[cur_idx]):
+        cur_state['RSI'] = h['RSI_v'].iloc[cur_idx]
+    if 'MACD' in indicators_used and not pd.isna(h['MACD_diff'].iloc[cur_idx]):
+        cur_state['MACD'] = h['MACD_diff'].iloc[cur_idx]
+    if 'OBV' in indicators_used and not pd.isna(h['OBV_chg'].iloc[cur_idx]):
+        cur_state['OBV'] = h['OBV_chg'].iloc[cur_idx]
 
-        if pos is not None:
-            held = i - pos['entry_idx']
-            high_i = h['High'].iloc[i]
-            low_i = h['Low'].iloc[i]
-            exit_p = None; exit_reason = None
-            if low_i <= pos['stop']:
-                exit_p = pos['stop']; exit_reason = "stop"
-            elif not pos['half_out'] and high_i >= pos['tp1']:
-                half_pnl = (pos['tp1'] - pos['entry_price']) / pos['entry_price']
-                capital *= (1 + half_pnl * 0.5)
-                pos['half_out'] = True
-                pos['stop'] = pos['entry_price']
-                continue
-            elif high_i >= pos['tp2']:
-                exit_p = pos['tp2']; exit_reason = "tp2"
-            elif held >= params['max_hold']:
-                exit_p = curr_p; exit_reason = "time"
+    if not cur_state: return None
 
-            if exit_p:
-                pnl = (exit_p - pos['entry_price']) / pos['entry_price']
-                if pos['half_out']:
-                    capital *= (1 + pnl * 0.5)
-                else:
-                    capital *= (1 + pnl)
-                trades.append({
-                    "entry": pos['entry_price'], "exit": exit_p,
-                    "pnl": pnl, "reason": exit_reason,
-                    "held": held, "half_out": pos['half_out']
-                })
-                pos = None
+    # 과거 시점 순회하면서 유사도 계산
+    candidates = []
+    max_lookforward = max(lookforward_days)
+    for i in range(50, cur_idx - max_lookforward - 30):  # 최근 30일 제외
+        score = 0
+        valid = True
+        # 각 지표별 유사도 (작을수록 유사)
+        for ind, cur_v in cur_state.items():
+            if ind == 'BB':
+                p_v = h['BB_pos'].iloc[i]
+                if pd.isna(p_v): valid = False; break
+                # 둘 다 0~1 범위
+                score += abs(cur_v - p_v) * 100
+            elif ind == 'RSI':
+                p_v = h['RSI_v'].iloc[i]
+                if pd.isna(p_v): valid = False; break
+                # 0~100, 차이 5점 이하면 좋음
+                score += abs(cur_v - p_v)
+            elif ind == 'MACD':
+                p_v = h['MACD_diff'].iloc[i]
+                if pd.isna(p_v): valid = False; break
+                # 부호 일치 + 크기 비슷
+                if np.sign(cur_v) != np.sign(p_v): valid = False; break
+                score += abs(cur_v - p_v) / max(abs(cur_v), 0.1) * 10
+            elif ind == 'OBV':
+                p_v = h['OBV_chg'].iloc[i]
+                if pd.isna(p_v): valid = False; break
+                # 부호 일치 우선
+                if np.sign(cur_v) != np.sign(p_v): score += 30
+                score += abs(cur_v - p_v) / 5
+        if not valid: continue
+        candidates.append({"idx": i, "score": score, "date": h.index[i]})
 
-        if pos is None:
-            sig = quick_signal_score(h, i)
-            if sig >= params['min_score']:
-                pos = {
-                    "entry_idx": i,
-                    "entry_price": curr_p,
-                    "stop": curr_p - atr * params['stop_atr'],
-                    "tp1": curr_p + atr * params['tp1_atr'],
-                    "tp2": curr_p + atr * params['tp2_atr'],
-                    "half_out": False
-                }
+    if not candidates: return None
 
-    if not trades:
-        return None
+    # 유사도 상위 5개
+    candidates.sort(key=lambda x: x['score'])
+    top5 = candidates[:5]
 
-    wins = [t for t in trades if t['pnl'] > 0]
-    losses = [t for t in trades if t['pnl'] <= 0]
-    win_rate = len(wins) / len(trades) * 100
-    avg_win = np.mean([t['pnl'] for t in wins]) * 100 if wins else 0
-    avg_loss = np.mean([t['pnl'] for t in losses]) * 100 if losses else 0
-    expectancy = (win_rate/100 * avg_win) + ((1-win_rate/100) * avg_loss)
-    pf_num = sum(t['pnl'] for t in wins)
-    pf_den = abs(sum(t['pnl'] for t in losses))
-    pf = pf_num / pf_den if pf_den > 0 else 99
-    days = (h.index[end_idx] - h.index[start_idx]).days
-    years = max(days / 365, 0.1)
-    cagr = ((capital / 10000) ** (1/years) - 1) * 100
-    pnls = [t['pnl'] for t in trades]
-    avg_held = np.mean([t['held'] for t in trades]) if trades else 1
-    sharpe = (np.mean(pnls) / np.std(pnls) * np.sqrt(252 / max(avg_held, 1))) if np.std(pnls) > 0 else 0
-    equity = [10000]; cap = 10000
-    for t in trades:
-        mult = 0.5 if t['half_out'] else 1.0
-        cap *= (1 + t['pnl'] * mult)
-        equity.append(cap)
-    peak = equity[0]; mdd = 0
-    for e in equity:
-        if e > peak: peak = e
-        dd = (e - peak) / peak * 100
-        if dd < mdd: mdd = dd
+    # 이후 가격 변동 통계
+    stats = {}
+    for d in lookforward_days:
+        chgs = []
+        for c in top5:
+            if c['idx'] + d < len(h):
+                p_now = h['Close'].iloc[c['idx']]
+                p_then = h['Close'].iloc[c['idx'] + d]
+                chgs.append((p_then - p_now) / p_now * 100)
+        if chgs:
+            stats[d] = {
+                "avg": np.mean(chgs),
+                "wins": sum(1 for c in chgs if c > 0),
+                "total": len(chgs),
+                "win_rate": sum(1 for c in chgs if c > 0) / len(chgs) * 100,
+                "max": max(chgs),
+                "min": min(chgs),
+            }
+
+    # 매수/매도 판단
+    if 5 in stats and 10 in stats:
+        avg_5 = stats[5]["avg"]
+        avg_10 = stats[10]["avg"]
+        wr_5 = stats[5]["win_rate"]
+        wr_10 = stats[10]["win_rate"]
+        if wr_10 >= 70 and avg_10 > 3:
+            verdict = ("🟢 강한 매수 신호", "pos", f"10일 후 상승 확률 {wr_10:.0f}%, 평균 +{avg_10:.2f}%")
+        elif wr_10 >= 60 and avg_10 > 0:
+            verdict = ("🟡 매수 우위", "pos", f"10일 후 상승 확률 {wr_10:.0f}%, 평균 +{avg_10:.2f}%")
+        elif wr_10 <= 30 or avg_10 < -3:
+            verdict = ("🔴 매도 우위", "neg", f"10일 후 상승 확률 {wr_10:.0f}%, 평균 {avg_10:+.2f}%")
+        else:
+            verdict = ("⚪ 중립", "warn", f"10일 후 상승 확률 {wr_10:.0f}%, 뚜렷한 신호 없음")
+    else:
+        verdict = ("⚪ 데이터 부족", "warn", "")
+
+    # 현재 지표 상태 텍스트
+    cur_desc = {}
+    if 'BB' in cur_state:
+        cur_desc['BB'] = f"밴드 {cur_state['BB']*100:.0f}% 위치"
+    if 'RSI' in cur_state:
+        rsi_v = cur_state['RSI']
+        rsi_label = "과매도" if rsi_v < 30 else "과매수" if rsi_v > 70 else "중립"
+        cur_desc['RSI'] = f"{rsi_v:.0f} ({rsi_label})"
+    if 'MACD' in cur_state:
+        macd_v = cur_state['MACD']
+        cur_desc['MACD'] = f"{'양전환' if macd_v > 0 else '음전환'} {macd_v:+.2f}"
+    if 'OBV' in cur_state:
+        obv_v = cur_state['OBV']
+        cur_desc['OBV'] = f"{obv_v:+.1f}% (20일)"
 
     return {
-        "trades": len(trades), "win_rate": round(win_rate, 1),
-        "expectancy": round(expectancy, 2), "pf": round(pf, 2),
-        "cagr": round(cagr, 1), "sharpe": round(sharpe, 2),
-        "mdd": round(mdd, 1), "final": round(capital, 0),
+        "cur_state": cur_state,
+        "cur_desc": cur_desc,
+        "matches": top5,
+        "stats": stats,
+        "verdict": verdict,
     }
-
-
-@st.cache_data(ttl=60*60*24*7, show_spinner=False)
-def optimize_strategy(ticker):
-    """단일 종목 파라미터 최적화 + IS/OOS 검증 (캐시 7일)"""
-    try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="5y")
-        if len(hist) < 500: return None
-        hist = compute_indicators(hist)
-        hist['ATR'] = compute_atr(hist)
-        split = int(len(hist) * 0.7)
-
-        params = {"min_score": 3, "stop_atr": 1.0, "tp1_atr": 1.5, "tp2_atr": 2.5, "max_hold": 2}
-
-        def score_of(r):
-            if r is None: return -999
-            return r['expectancy'] * 0.4 + r['sharpe'] * 0.4 + (r['win_rate']/100) * 0.2
-
-        for key, candidates in [
-            ("stop_atr", [0.8, 1.0, 1.2, 1.5]),
-            ("tp1_atr", [1.0, 1.5, 2.0]),
-            ("tp2_atr", [2.0, 2.5, 3.5, 5.0]),
-            ("max_hold", [1, 2, 3, 5]),
-            ("min_score", [2, 3, 4]),
-        ]:
-            best = -999; best_v = params[key]
-            for v in candidates:
-                p = {**params, key: v}
-                r = run_backtest(hist, p, end_idx=split)
-                sc = score_of(r)
-                if sc > best: best = sc; best_v = v
-            params[key] = best_v
-
-        is_result = run_backtest(hist, params, end_idx=split)
-        oos_result = run_backtest(hist, params, start_idx=split)
-
-        if is_result is None or oos_result is None: return None
-
-        cagr_drop = is_result['cagr'] - oos_result['cagr']
-        sharpe_drop = is_result['sharpe'] - oos_result['sharpe']
-        if abs(cagr_drop) > 30 or abs(sharpe_drop) > 1.5:
-            diagnosis = ("⚠️ 과적합 의심", "neg", "IS 대비 OOS 성과 차이 큼")
-        elif cagr_drop > 15 or sharpe_drop > 0.8:
-            diagnosis = ("🟡 약한 과적합", "warn", "약간의 성과 저하 있음")
-        else:
-            diagnosis = ("✅ 견고한 전략", "pos", "OOS 성과가 IS와 유사")
-
-        return {
-            "params": params,
-            "is_period": (hist.index[60].strftime("%Y-%m-%d"), hist.index[split].strftime("%Y-%m-%d")),
-            "oos_period": (hist.index[split+1].strftime("%Y-%m-%d"), hist.index[-1].strftime("%Y-%m-%d")),
-            "is_result": is_result, "oos_result": oos_result,
-            "diagnosis": diagnosis,
-        }
-    except Exception:
-        return None
 
 
 def backtest_prediction(hist, info):
@@ -2000,69 +1970,87 @@ try:
             bt_cls = "neg"
         st.markdown(f"<div class='card' style='margin-top:8px; padding:14px 18px;'><span class='{bt_cls}' style='font-weight:700;'>{bt_msg}</span></div>", unsafe_allow_html=True)
 
-    # ===== 전략 최적화 (IS/OOS) =====
+    # ===== 유사 패턴 검색 (과거 비슷한 상황 통계) =====
     st.markdown("---")
-    st.markdown("<div class='section-h'>⚙️ 매매 전략 최적화 (ATR 기반) <span style='color:#64748b; font-weight:500; font-size:11px; margin-left:8px;'>· In-Sample 70% / Out-of-Sample 30% · 캐시 1주</span></div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-h'>🔍 유사 패턴 검색 <span style='color:#64748b; font-weight:500; font-size:11px; margin-left:8px;'>· 보조지표 상태가 비슷했던 과거 시점 → 이후 통계</span></div>", unsafe_allow_html=True)
+    st.caption("✅ 사용할 지표 선택 → 비슷한 과거 5개 시점을 찾아 1일/5일/10일 후 평균 변동률과 승률을 보여줍니다")
 
-    run_opt = st.checkbox("이 종목 전략 최적화 실행 (1~3분 소요)", key="run_opt")
-    if run_opt:
-        with st.spinner("AI가 5개 파라미터 최적화 중..."):
-            opt = optimize_strategy(ticker)
-        if opt is None:
-            st.warning("최적화 실패 - 데이터 부족 또는 거래 시그널 없음")
+    pat_col = st.columns(4)
+    with pat_col[0]:
+        use_bb = st.checkbox("📊 볼린저밴드", value=True, key="ind_bb")
+    with pat_col[1]:
+        use_rsi = st.checkbox("📈 RSI", value=True, key="ind_rsi")
+    with pat_col[2]:
+        use_macd = st.checkbox("📉 MACD", value=True, key="ind_macd")
+    with pat_col[3]:
+        use_obv = st.checkbox("💰 OBV", value=True, key="ind_obv")
+
+    inds = []
+    if use_bb: inds.append('BB')
+    if use_rsi: inds.append('RSI')
+    if use_macd: inds.append('MACD')
+    if use_obv: inds.append('OBV')
+
+    if not inds:
+        st.warning("최소 1개 이상의 지표를 선택하세요")
+    else:
+        with st.spinner("유사 패턴 검색 중..."):
+            sim = find_similar_patterns(hist, inds)
+
+        if sim is None:
+            st.info("유사 패턴을 찾을 수 없습니다 (데이터 부족)")
         else:
-            # 최적 파라미터
-            p = opt["params"]
-            st.markdown(f"""<div class='card' style='padding:16px 22px; border-left:4px solid #3b82f6;'>
-            <div style='color:#94a3b8; font-size:13px; font-weight:700; margin-bottom:10px;'>🎯 최적 파라미터</div>
-            <div style='display:grid; grid-template-columns:repeat(5, 1fr); gap:12px;'>
-            <div><div style='color:#64748b; font-size:11px;'>매수 시그널</div><div style='color:#f1f5f9; font-weight:800; font-size:18px;'>점수 ≥ {p['min_score']}</div></div>
-            <div><div style='color:#64748b; font-size:11px;'>손절 (ATR)</div><div style='color:#ef4444; font-weight:800; font-size:18px;'>-{p['stop_atr']}×</div></div>
-            <div><div style='color:#64748b; font-size:11px;'>익절1 (반청산)</div><div style='color:#22c55e; font-weight:800; font-size:18px;'>+{p['tp1_atr']}×</div></div>
-            <div><div style='color:#64748b; font-size:11px;'>익절2 (전량)</div><div style='color:#22c55e; font-weight:800; font-size:18px;'>+{p['tp2_atr']}×</div></div>
-            <div><div style='color:#64748b; font-size:11px;'>최대 보유</div><div style='color:#f1f5f9; font-weight:800; font-size:18px;'>{p['max_hold']}일</div></div>
+            # 현재 지표 상태
+            cur_html = ""
+            for ind in inds:
+                if ind in sim['cur_desc']:
+                    cur_html += f"<div style='display:inline-block; padding:6px 12px; margin:3px; background:#1e293b; border-radius:6px; font-size:12px;'><span style='color:#94a3b8;'>{ind}:</span> <b style='color:#f1f5f9;'>{sim['cur_desc'][ind]}</b></div>"
+
+            v_name, v_cls, v_desc = sim['verdict']
+            st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:4px solid {"#22c55e" if v_cls=="pos" else "#ef4444" if v_cls=="neg" else "#f59e0b"};'>
+            <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;'>
+            <div>
+            <div style='color:#94a3b8; font-size:12px; font-weight:700; margin-bottom:6px;'>📍 현재 지표 상태</div>
+            <div>{cur_html}</div>
+            </div>
+            <div style='text-align:right;'>
+            <span class='{v_cls}' style='font-size:20px; font-weight:900;'>{v_name}</span>
+            <div style='color:#94a3b8; font-size:12px; margin-top:4px;'>{v_desc}</div>
+            </div>
             </div>
             </div>""", unsafe_allow_html=True)
 
-            # IS / OOS 비교 표
-            ir = opt["is_result"]; orr = opt["oos_result"]
-            opt_c1, opt_c2 = st.columns(2)
-            with opt_c1:
-                st.markdown(f"""<div class='card' style='padding:16px 22px;'>
-                <div style='color:#94a3b8; font-size:13px; font-weight:700;'>📊 In-Sample (학습)</div>
-                <div style='color:#64748b; font-size:11px; margin-bottom:12px;'>{opt['is_period'][0]} ~ {opt['is_period'][1]}</div>
-                <div style='display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed #334155;'><span style='color:#94a3b8;'>거래 수</span><b>{ir['trades']}</b></div>
-                <div style='display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed #334155;'><span style='color:#94a3b8;'>승률</span><b class='pos'>{ir['win_rate']}%</b></div>
-                <div style='display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed #334155;'><span style='color:#94a3b8;'>기대값</span><b>{ir['expectancy']}</b></div>
-                <div style='display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed #334155;'><span style='color:#94a3b8;'>Profit Factor</span><b>{ir['pf']}</b></div>
-                <div style='display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed #334155;'><span style='color:#94a3b8;'>CAGR</span><b class='pos'>{ir['cagr']}%</b></div>
-                <div style='display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed #334155;'><span style='color:#94a3b8;'>Sharpe</span><b>{ir['sharpe']}</b></div>
-                <div style='display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed #334155;'><span style='color:#94a3b8;'>MDD</span><b class='neg'>{ir['mdd']}%</b></div>
-                <div style='display:flex; justify-content:space-between; padding:5px 0;'><span style='color:#94a3b8;'>최종 자본 ($10K→)</span><b class='pos'>${ir['final']:,.0f}</b></div>
-                </div>""", unsafe_allow_html=True)
-            with opt_c2:
-                st.markdown(f"""<div class='card' style='padding:16px 22px; border:1px solid #22c55e;'>
-                <div style='color:#22c55e; font-size:13px; font-weight:700;'>🔬 Out-of-Sample (검증)</div>
-                <div style='color:#64748b; font-size:11px; margin-bottom:12px;'>{opt['oos_period'][0]} ~ {opt['oos_period'][1]}</div>
-                <div style='display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed #334155;'><span style='color:#94a3b8;'>거래 수</span><b>{orr['trades']}</b></div>
-                <div style='display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed #334155;'><span style='color:#94a3b8;'>승률</span><b class='pos'>{orr['win_rate']}%</b></div>
-                <div style='display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed #334155;'><span style='color:#94a3b8;'>기대값</span><b>{orr['expectancy']}</b></div>
-                <div style='display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed #334155;'><span style='color:#94a3b8;'>Profit Factor</span><b>{orr['pf']}</b></div>
-                <div style='display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed #334155;'><span style='color:#94a3b8;'>CAGR</span><b class='pos'>{orr['cagr']}%</b></div>
-                <div style='display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed #334155;'><span style='color:#94a3b8;'>Sharpe</span><b>{orr['sharpe']}</b></div>
-                <div style='display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed #334155;'><span style='color:#94a3b8;'>MDD</span><b class='neg'>{orr['mdd']}%</b></div>
-                <div style='display:flex; justify-content:space-between; padding:5px 0;'><span style='color:#94a3b8;'>최종 자본 ($10K→)</span><b class='pos'>${orr['final']:,.0f}</b></div>
-                </div>""", unsafe_allow_html=True)
+            # 이후 가격 변화 통계 (1일/5일/10일)
+            st.markdown("<div style='font-weight:700; color:#94a3b8; font-size:13px; margin:14px 0 8px 0;'>📊 유사 패턴 이후 가격 변화 통계 (과거 5개 시점 평균)</div>", unsafe_allow_html=True)
+            stat_cols = st.columns(3)
+            for idx, d in enumerate([1, 5, 10]):
+                with stat_cols[idx]:
+                    if d in sim['stats']:
+                        st_d = sim['stats'][d]
+                        avg = st_d['avg']
+                        wr = st_d['win_rate']
+                        avg_cls = "pos" if avg > 0 else "neg"
+                        st.markdown(f"""<div class='card' style='padding:16px 20px; text-align:center;'>
+                        <div style='color:#94a3b8; font-size:13px; font-weight:600;'>{d}일 후</div>
+                        <div class='{avg_cls}' style='font-size:32px; font-weight:900; margin:8px 0;'>{avg:+.2f}%</div>
+                        <div style='color:#cbd5e1; font-size:13px;'>승률 <b>{wr:.0f}%</b> · 최고 {st_d['max']:+.1f}% · 최저 {st_d['min']:+.1f}%</div>
+                        </div>""", unsafe_allow_html=True)
 
-            # 진단
-            dname, dcls, ddesc = opt["diagnosis"]
-            st.markdown(f"""<div class='card' style='margin-top:10px; padding:14px 18px;'>
-            <span class='{dcls}' style='font-weight:800; font-size:15px;'>{dname}</span>
-            <span style='color:#94a3b8; margin-left:10px; font-size:13px;'>· {ddesc}</span>
-            <span style='color:#64748b; margin-left:12px; font-size:12px;'>CAGR {ir['cagr']}% → {orr['cagr']}% · Sharpe {ir['sharpe']} → {orr['sharpe']}</span>
-            </div>""", unsafe_allow_html=True)
-
-            st.caption("💡 **시그널**: 이평선 + RSI + MACD + 거래량 종합 점수 ≥ 임계값 · **익절1**: 절반 청산 후 본전 손절로 이동 · **익절2**: 전량 청산 · 백테스트는 슬리피지/수수료 미반영")
+            # 유사 시점 리스트
+            st.markdown("<div style='font-weight:700; color:#94a3b8; font-size:13px; margin:14px 0 8px 0;'>🕒 유사도 높은 과거 시점 5개</div>", unsafe_allow_html=True)
+            rows = []
+            for m in sim['matches']:
+                row = {"날짜": m['date'].strftime("%Y-%m-%d"), "당시 주가": f"{ccy}{hist['Close'].iloc[m['idx']]:,.2f}"}
+                for d in [1, 5, 10]:
+                    if m['idx'] + d < len(hist):
+                        p_then = hist['Close'].iloc[m['idx'] + d]
+                        p_now = hist['Close'].iloc[m['idx']]
+                        chg = (p_then - p_now) / p_now * 100
+                        row[f"{d}일 후"] = f"{chg:+.2f}%"
+                rows.append(row)
+            sim_df = pd.DataFrame(rows)
+            st.dataframe(sim_df, use_container_width=True, hide_index=True)
+            st.caption("💡 과거 패턴 기반 참고 통계입니다 · 투자 판단과 책임은 사용자에게 있습니다")
 
     # ===== 경제 위험도 분석 (인플레 + 경기침체 통합) =====
     st.markdown("---")
