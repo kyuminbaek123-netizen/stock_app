@@ -628,10 +628,10 @@ def score_all(hist, info, patterns, macro, is_kr=False):
 
     total = round(sum(s[k] * w.get(k, 0) for k in s), 1)
 
-    if total >= 72: verdict, vclass = "적극 매수", "v-strong-buy"
-    elif total >= 62: verdict, vclass = "매수", "v-buy"
-    elif total >= 42: verdict, vclass = "중립 / 관망", "v-hold"
-    elif total >= 30: verdict, vclass = "매도", "v-sell"
+    if total >= 75: verdict, vclass = "적극 매수", "v-strong-buy"
+    elif total >= 65: verdict, vclass = "매수", "v-buy"
+    elif total >= 45: verdict, vclass = "중립 / 관망", "v-hold"
+    elif total >= 35: verdict, vclass = "매도", "v-sell"
     else: verdict, vclass = "적극 매도", "v-strong-sell"
 
     return {"score": total, "verdict": verdict, "vclass": vclass,
@@ -961,24 +961,26 @@ def analyze_ma(h):
             cross = (f"{back}일 전 ⚠️ 데드크로스 (MA20↘MA60)", "neg")
             break
 
-    # 매매 타이밍 (장기추세 + 이격도)
+    # 매매 타이밍 (장기추세 + 이격도, 보수적)
     long_trend = "상승" if curr > ma240 else "하락"
     if long_trend == "상승":
-        if diverg < 5:
-            timing = ("🟢 매수 타이밍", "pos", f"장기상승 추세 + MA240 근접 (+{diverg:.1f}%) - 좋은 진입점")
-        elif diverg < 15:
-            timing = ("🟡 관망", "warn", f"장기상승 + 이격도 보통 (+{diverg:.1f}%)")
+        if diverg < 3:
+            timing = ("🟢 매수 타이밍", "pos", f"장기상승 추세 + MA240 매우 근접 (+{diverg:.1f}%) - 진입 적기")
+        elif diverg < 10:
+            timing = ("🟡 분할 매수 고려", "warn", f"장기상승 + 이격도 양호 (+{diverg:.1f}%)")
+        elif diverg < 20:
+            timing = ("🟠 관망", "warn", f"장기상승이지만 이격 확대 (+{diverg:.1f}%) - 신규 진입 자제")
         elif diverg < 30:
-            timing = ("🟠 매도 준비", "warn", f"장기상승 + 이격 확대 (+{diverg:.1f}%) - 과열 진입")
+            timing = ("🔴 매도 준비", "neg", f"이격도 +{diverg:.1f}% 과열권 - 분할 매도 고려")
         else:
             timing = ("🔴 적극 매도", "neg", f"이격도 +{diverg:.1f}% 극단 과열 - 조정 임박")
     else:
         if diverg > -5:
-            timing = ("🟡 관망", "warn", f"장기하락 + MA240 근접 ({diverg:.1f}%) - 약세 유지")
-        elif diverg > -15:
+            timing = ("🟠 관망", "warn", f"장기하락 추세 - 약세 유지")
+        elif diverg > -20:
             timing = ("🔴 매도", "neg", f"장기하락 + 이격 ({diverg:.1f}%)")
         else:
-            timing = ("🟢 매수 타이밍 (역발상)", "pos", f"하락이격 {diverg:.1f}% 극단 - 반등 가능")
+            timing = ("🟡 반등 가능성 (역발상)", "warn", f"하락이격 {diverg:.1f}% 극단 - 보수적 분할 매수 고려")
 
     return {
         "ma20": ma20, "ma60": ma60, "ma120": ma120, "ma240": ma240,
@@ -1103,21 +1105,21 @@ def find_similar_patterns(hist, indicators_used, lookforward_days=[1, 5, 10]):
                 "min": min(chgs),
             }
 
-    # 매수/매도 판단 (평균 + 승률 둘 다 고려)
+    # 매수/매도 판단 (평균 + 승률 둘 다 고려, 보수적)
     if 5 in stats and 10 in stats:
         avg_10 = stats[10]["avg"]
         wr_10 = stats[10]["win_rate"]
 
-        # 강한 매수: 승률 높고 평균도 양수
-        if wr_10 >= 70 and avg_10 > 3:
+        # 강한 매수: 승률 80%↑ + 평균 +5%↑ (엄격)
+        if wr_10 >= 80 and avg_10 > 5:
             verdict = ("🟢 강한 매수 신호", "pos", f"10일 후 상승률 {wr_10:.0f}% · 평균 +{avg_10:.2f}%")
-        elif wr_10 >= 60 and avg_10 > 0:
+        elif wr_10 >= 70 and avg_10 > 2:
             verdict = ("🟡 매수 우위", "pos", f"10일 후 상승률 {wr_10:.0f}% · 평균 +{avg_10:.2f}%")
-        # 명확한 매도: 승률 낮고 평균도 음수
-        elif wr_10 <= 30 and avg_10 < -2:
+        # 매도: 승률 25%↓ or 평균 -3%↓
+        elif wr_10 <= 25 or (wr_10 <= 40 and avg_10 < -3):
             verdict = ("🔴 매도 우위", "neg", f"10일 후 상승률 {wr_10:.0f}% · 평균 {avg_10:+.2f}%")
         # 평균과 승률 방향 다름
-        elif (avg_10 > 0 and wr_10 < 40) or (avg_10 < 0 and wr_10 > 60):
+        elif (avg_10 > 0 and wr_10 < 50) or (avg_10 < 0 and wr_10 > 50):
             verdict = ("⚠️ 신호 혼조", "warn", f"평균 {avg_10:+.2f}% · 승률 {wr_10:.0f}% - 방향 불일치, 보수적 접근")
         else:
             verdict = ("⚪ 중립", "warn", f"10일 후 상승률 {wr_10:.0f}% · 평균 {avg_10:+.2f}% - 뚜렷한 신호 없음")
@@ -1673,8 +1675,8 @@ def make_market_summary(macro, breadth=None, sp_trend=None, ndx_trend=None):
 
     score = max(0, min(100, weighted_score))
 
-    if score >= 70: verdict, vcls = "위험자산 우호", "pos"
-    elif score >= 55: verdict, vcls = "중립적 우호", "pos"
+    if score >= 75: verdict, vcls = "위험자산 우호", "pos"
+    elif score >= 60: verdict, vcls = "중립적 우호", "pos"
     elif score >= 45: verdict, vcls = "혼조", "warn"
     elif score >= 30: verdict, vcls = "방어적", "neg"
     else: verdict, vcls = "위험회피 국면", "neg"
@@ -1846,17 +1848,17 @@ try:
     pos_html = "<br>".join(f"<span class='pos'>✓ {p}</span>" for p in mkt["positives"]) or "<span style='color:#64748b;'>특이사항 없음</span>"
     neg_html = "<br>".join(f"<span class='neg'>✗ {n}</span>" for n in mkt["negatives"]) or "<span style='color:#64748b;'>특이사항 없음</span>"
 
-    # 상세 결론 메시지
-    if mkt["score"] >= 70:
-        detail = "유동성, 금리, 신용 환경이 위험자산에 우호적입니다. 주식·암호화폐 등 성장 자산 비중 확대 구간."
-    elif mkt["score"] >= 55:
-        detail = "전반적으로 우호적이지만 일부 부정 요인 존재. 선별적 매수 + 분할 매수 전략 권장."
+    # 상세 결론 메시지 (보수적 표현)
+    if mkt["score"] >= 75:
+        detail = "유동성·금리·신용 환경이 위험자산에 우호적입니다. 다만 시장 전반의 고점 위험은 항상 존재. 분할 매수 + 손절선 명확히 설정 권장."
+    elif mkt["score"] >= 60:
+        detail = "전반적으로 우호적이지만 일부 부정 요인 존재. 신규 진입은 분할 매수로 천천히, 기존 포지션은 유지하되 익절선 점검."
     elif mkt["score"] >= 45:
-        detail = "긍정/부정 요인이 혼재. 신규 진입보다는 기존 포지션 관리 중심으로."
+        detail = "긍정/부정 요인이 혼재. 신규 진입 보류 권장. 기존 포지션 비중 점검, 손절선 상향."
     elif mkt["score"] >= 30:
-        detail = "방어적 환경. 현금 비중 확대, 단기채·금 등 안전자산 선호 권장."
+        detail = "방어적 환경. 현금 비중 확대, 변동성 자산(개별주·암호화폐) 비중 축소. 단기채·금 등 안전자산 비중 검토."
     else:
-        detail = "위험회피 국면 진입. 현금화 우선, 변동성 자산 비중 축소."
+        detail = "위험회피 국면 진입. 현금화 우선, 신규 진입 전면 보류. 시장 회복 신호(VIX 안정, 시장폭 회복) 확인 후 재진입."
 
     st.markdown(f"""<div class='card' style='margin-top:14px; padding:18px 22px; border-left:4px solid #3b82f6;'>
     <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;'>
@@ -2204,16 +2206,18 @@ try:
         <div class='card-value {vcp_cls}'>{vcp_s:.0f}점</div>
         <div class='card-sub' style='font-size:12px; margin-top:8px; line-height:1.6;'>{vcp_d}</div>
         </div>""", unsafe_allow_html=True)
-    # 세력 매집 종합 결론
+    # 세력 매집 종합 결론 (보수적)
     accu_avg = (obv_s + poc_s + vcp_s) / 3
-    if accu_avg >= 70:
-        accu_msg, accu_cls = "🔥 강한 세력 매집 구간 - 매수 우위", "pos"
-    elif accu_avg >= 55:
-        accu_msg, accu_cls = "💡 매집 신호 감지 - 관심", "pos"
-    elif accu_avg <= 35:
+    if accu_avg >= 75:
+        accu_msg, accu_cls = "🔥 강한 세력 매집 - 매수 신호 (확정 전 분할진입)", "pos"
+    elif accu_avg >= 60:
+        accu_msg, accu_cls = "💡 매집 신호 감지 - 관심 단계", "pos"
+    elif accu_avg <= 30:
         accu_msg, accu_cls = "⚠️ 세력 분산 - 매도 우위", "neg"
+    elif accu_avg <= 40:
+        accu_msg, accu_cls = "🟠 매집 약함 - 관망 권장", "warn"
     else:
-        accu_msg, accu_cls = "⚖️ 매집/분산 혼조", "warn"
+        accu_msg, accu_cls = "⚖️ 매집/분산 혼조 - 신중", "warn"
     st.markdown(f"<div class='card' style='margin-top:8px; padding:12px 18px;'><span class='{accu_cls}' style='font-weight:800;'>{accu_msg}</span> <span style='color:#94a3b8; margin-left:8px; font-size:13px;'>· 종합 {accu_avg:.0f}점</span></div>", unsafe_allow_html=True)
 
 
