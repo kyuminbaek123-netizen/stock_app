@@ -1098,20 +1098,24 @@ def find_similar_patterns(hist, indicators_used, lookforward_days=[1, 5, 10]):
                 "min": min(chgs),
             }
 
-    # 매수/매도 판단
+    # 매수/매도 판단 (평균 + 승률 둘 다 고려)
     if 5 in stats and 10 in stats:
-        avg_5 = stats[5]["avg"]
         avg_10 = stats[10]["avg"]
-        wr_5 = stats[5]["win_rate"]
         wr_10 = stats[10]["win_rate"]
+
+        # 강한 매수: 승률 높고 평균도 양수
         if wr_10 >= 70 and avg_10 > 3:
-            verdict = ("🟢 강한 매수 신호", "pos", f"10일 후 상승 확률 {wr_10:.0f}%, 평균 +{avg_10:.2f}%")
+            verdict = ("🟢 강한 매수 신호", "pos", f"10일 후 상승률 {wr_10:.0f}% · 평균 +{avg_10:.2f}%")
         elif wr_10 >= 60 and avg_10 > 0:
-            verdict = ("🟡 매수 우위", "pos", f"10일 후 상승 확률 {wr_10:.0f}%, 평균 +{avg_10:.2f}%")
-        elif wr_10 <= 30 or avg_10 < -3:
-            verdict = ("🔴 매도 우위", "neg", f"10일 후 상승 확률 {wr_10:.0f}%, 평균 {avg_10:+.2f}%")
+            verdict = ("🟡 매수 우위", "pos", f"10일 후 상승률 {wr_10:.0f}% · 평균 +{avg_10:.2f}%")
+        # 명확한 매도: 승률 낮고 평균도 음수
+        elif wr_10 <= 30 and avg_10 < -2:
+            verdict = ("🔴 매도 우위", "neg", f"10일 후 상승률 {wr_10:.0f}% · 평균 {avg_10:+.2f}%")
+        # 평균과 승률 방향 다름
+        elif (avg_10 > 0 and wr_10 < 40) or (avg_10 < 0 and wr_10 > 60):
+            verdict = ("⚠️ 신호 혼조", "warn", f"평균 {avg_10:+.2f}% · 승률 {wr_10:.0f}% - 방향 불일치, 보수적 접근")
         else:
-            verdict = ("⚪ 중립", "warn", f"10일 후 상승 확률 {wr_10:.0f}%, 뚜렷한 신호 없음")
+            verdict = ("⚪ 중립", "warn", f"10일 후 상승률 {wr_10:.0f}% · 평균 {avg_10:+.2f}% - 뚜렷한 신호 없음")
     else:
         verdict = ("⚪ 데이터 부족", "warn", "")
 
