@@ -126,12 +126,15 @@ def get_macro_all():
     m["usdjpy"] = yf_last("JPY=X")
     m["wti"] = yf_last("CL=F")
     m["kospi"] = yf_last("^KS11")
+    # 금리 - yfinance가 FRED보다 실시간 (^TNX = 10년, ^FVX = 5년, ^IRX = 13주)
+    # 2년물 (^TYX는 30년이라 안 맞음, FRED에서 가져옴)
+    m["us10y_yf"] = yf_last("^TNX")
     # FRED 미국 유동성/금리
     m["fed_assets"] = fred_get("WALCL")      # 연준 총자산
     m["reserves"] = fred_get("WRESBAL")      # 지급준비금
     m["rrp"] = fred_get("RRPONTSYD")          # 역레포
     m["tga"] = fred_get("WTREGEN")            # TGA
-    m["us10y"] = fred_get("DGS10")            # 10년물
+    m["us10y"] = fred_get("DGS10")            # 10년물 (FRED 백업)
     m["us2y"] = fred_get("DGS2")              # 2년물
     m["hy_spread"] = fred_get("BAMLH0A0HYM2") # 하이일드 스프레드
     # 인플레이션 지표
@@ -1209,20 +1212,36 @@ def analyze_economy(macro, hist=None):
     inf_score = 50
     inf_factors = []
     if cpi is not None:
-        if cpi > 4: inf_score += 25; inf_factors.append(("CPI YoY", f"{cpi:.1f}%", "위험", "neg"))
+        if cpi > 5: inf_score += 35; inf_factors.append(("CPI YoY", f"{cpi:.1f}%", "심각", "neg"))
+        elif cpi > 4: inf_score += 25; inf_factors.append(("CPI YoY", f"{cpi:.1f}%", "위험", "neg"))
+        elif cpi > 3.5: inf_score += 18; inf_factors.append(("CPI YoY", f"{cpi:.1f}%", "고위험", "neg"))
         elif cpi > 3: inf_score += 12; inf_factors.append(("CPI YoY", f"{cpi:.1f}%", "주의", "warn"))
-        elif cpi >= 2: inf_factors.append(("CPI YoY", f"{cpi:.1f}%", "정상", ""))
-        else: inf_score -= 10; inf_factors.append(("CPI YoY", f"{cpi:.1f}%", "안정", "pos"))
+        elif cpi > 2.5: inf_score += 5; inf_factors.append(("CPI YoY", f"{cpi:.1f}%", "약한주의", "warn"))
+        elif cpi >= 2: inf_factors.append(("CPI YoY", f"{cpi:.1f}%", "Fed목표 근접", ""))
+        elif cpi >= 1: inf_score -= 8; inf_factors.append(("CPI YoY", f"{cpi:.1f}%", "안정", "pos"))
+        else: inf_score -= 15; inf_factors.append(("CPI YoY", f"{cpi:.1f}%", "디스인플레", "warn"))
+
     if core_cpi is not None:
-        if core_cpi > 4: inf_score += 18; inf_factors.append(("Core CPI", f"{core_cpi:.1f}%", "끈적함", "neg"))
+        if core_cpi > 5: inf_score += 22; inf_factors.append(("Core CPI", f"{core_cpi:.1f}%", "극심", "neg"))
+        elif core_cpi > 4: inf_score += 16; inf_factors.append(("Core CPI", f"{core_cpi:.1f}%", "끈적함", "neg"))
+        elif core_cpi > 3.5: inf_score += 12; inf_factors.append(("Core CPI", f"{core_cpi:.1f}%", "고위험", "neg"))
         elif core_cpi > 3: inf_score += 8; inf_factors.append(("Core CPI", f"{core_cpi:.1f}%", "주의", "warn"))
+        elif core_cpi > 2.5: inf_score += 3; inf_factors.append(("Core CPI", f"{core_cpi:.1f}%", "약한주의", "warn"))
         else: inf_factors.append(("Core CPI", f"{core_cpi:.1f}%", "정상", "pos"))
+
     if ppi is not None:
-        if ppi > 4: inf_score += 10; inf_factors.append(("PPI YoY", f"{ppi:.1f}%", "생산자물가↑", "neg"))
-        else: inf_factors.append(("PPI YoY", f"{ppi:.1f}%", "정상", ""))
+        if ppi > 8: inf_score += 14; inf_factors.append(("PPI YoY", f"{ppi:.1f}%", "급등", "neg"))
+        elif ppi > 5: inf_score += 10; inf_factors.append(("PPI YoY", f"{ppi:.1f}%", "생산자물가↑↑", "neg"))
+        elif ppi > 3: inf_score += 5; inf_factors.append(("PPI YoY", f"{ppi:.1f}%", "생산자물가↑", "warn"))
+        elif ppi > 1: inf_factors.append(("PPI YoY", f"{ppi:.1f}%", "정상", ""))
+        else: inf_score -= 5; inf_factors.append(("PPI YoY", f"{ppi:.1f}%", "안정", "pos"))
+
     if pce is not None:
-        if pce > 3: inf_score += 8; inf_factors.append(("PCE YoY", f"{pce:.1f}%", "Fed목표 초과", "warn"))
-        else: inf_factors.append(("PCE YoY", f"{pce:.1f}%", "양호", "pos"))
+        if pce > 4: inf_score += 14; inf_factors.append(("PCE YoY", f"{pce:.1f}%", "Fed목표 크게 초과", "neg"))
+        elif pce > 3: inf_score += 8; inf_factors.append(("PCE YoY", f"{pce:.1f}%", "Fed목표 초과", "warn"))
+        elif pce > 2.5: inf_score += 3; inf_factors.append(("PCE YoY", f"{pce:.1f}%", "약한 초과", ""))
+        elif pce >= 2: inf_factors.append(("PCE YoY", f"{pce:.1f}%", "Fed목표 근접", "pos"))
+        else: inf_score -= 5; inf_factors.append(("PCE YoY", f"{pce:.1f}%", "양호", "pos"))
     inf_score = max(0, min(100, inf_score))
 
     # ====== 경기침체 점수 (높을수록 위험) ======
@@ -1330,46 +1349,240 @@ def analyze_economy(macro, hist=None):
     }
 
 
-def make_market_summary(macro):
-    """매크로 지표 종합 결론"""
+@st.cache_data(ttl=3600)
+def get_market_breadth():
+    """S&P500 상위 종목 중 200일선 위에 있는 비율"""
+    try:
+        # 상위 50개로 약식 측정 (전체 500개 돌리면 너무 느림)
+        sample = SP500_TOP100[:50]
+        above = 0; total = 0
+        for tk in sample:
+            try:
+                h = yf.Ticker(tk).history(period="1y")
+                if len(h) >= 200:
+                    ma200 = h['Close'].rolling(200).mean().iloc[-1]
+                    if h['Close'].iloc[-1] > ma200: above += 1
+                    total += 1
+            except Exception:
+                continue
+        if total < 20: return None
+        return {"above_pct": above / total * 100, "sample": total}
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=300)
+def get_index_trend(ticker):
+    """지수 추세 - 200일선 대비, 1M 변화"""
+    try:
+        h = yf.Ticker(ticker).history(period="1y")
+        if len(h) < 200: return None
+        curr = h['Close'].iloc[-1]
+        ma200 = h['Close'].rolling(200).mean().iloc[-1]
+        mom_1m = (curr - h['Close'].iloc[-21]) / h['Close'].iloc[-21] * 100 if len(h) >= 21 else 0
+        return {"curr": curr, "ma200": ma200, "above_ma200": curr > ma200,
+                "diverg": (curr - ma200) / ma200 * 100, "mom_1m": mom_1m}
+    except Exception:
+        return None
+
+
+def combined_diagnosis(market_score, inf_score, rec_score):
+    """시장 상황 + 인플레 + 침체 조합 → 과거 사례 기반 진단"""
+    # 시장 강도
+    if market_score >= 65: mkt_state = "강세"
+    elif market_score >= 50: mkt_state = "중립우호"
+    elif market_score >= 35: mkt_state = "혼조"
+    else: mkt_state = "약세"
+
+    # 인플레 강도
+    if inf_score >= 70: inf_state = "고인플레"
+    elif inf_score >= 55: inf_state = "인플레 경계"
+    elif inf_score >= 40: inf_state = "중립"
+    else: inf_state = "디스인플레"
+
+    # 침체 강도
+    if rec_score >= 60: rec_state = "침체임박"
+    elif rec_score >= 45: rec_state = "경계"
+    else: rec_state = "정상"
+
+    # 조합 진단 (역사적 사례)
+    combos = {
+        # (시장, 인플레, 침체)
+        ("강세", "고인플레", "정상"):
+            ("🔴 후기 사이클 (Late Cycle)",
+             "1970년대 후반·2021년 패턴. 시장은 강하지만 인플레가 끈적해 Fed 긴축 가능성↑. 빅테크 보다 에너지·원자재·금융주가 유리했음.",
+             "neg"),
+        ("강세", "고인플레", "경계"):
+            ("🔴 스태그플레이션 진입",
+             "1973-74년 유사. 시장 강세에도 불구하고 침체 신호 + 인플레. 결국 큰 조정으로 이어진 경우 많음. 방어주(헬스케어/필수소비재) 권장.",
+             "neg"),
+        ("강세", "고인플레", "침체임박"):
+            ("⚠️ 위험한 강세 (분배 구간)",
+             "1929·2000·2007 패턴. 표면적 강세지만 침체+인플레 동반은 폭락 전조였음. 현금 비중↑ 강력 권장.",
+             "neg"),
+        ("강세", "인플레 경계", "정상"):
+            ("🟡 후기 확장 (Mid-Late Cycle)",
+             "2017-18년 패턴. 시장은 좋고 인플레 압력 시작. 6~12개월 내 Fed 긴축 가능. 성장주 비중 점진 축소 권장.",
+             "warn"),
+        ("강세", "중립", "정상"):
+            ("🟢 골디락스 (Goldilocks)",
+             "2019·2024년 패턴. 시장 강세 + 물가 안정 + 경기 정상. 위험자산 비중 확대 적기. 성장주·기술주 강세 지속 경향.",
+             "pos"),
+        ("강세", "디스인플레", "정상"):
+            ("🟢 이상적 환경",
+             "Fed 완화 가능성↑ + 시장 강세. 1995-96, 2013년 유사. 위험자산 강세 장기화 가능.",
+             "pos"),
+        ("중립우호", "고인플레", "정상"):
+            ("🟠 스태그 우려",
+             "시장은 그저 그런데 물가만 높음. 1974, 2022년 패턴. 금/원자재/단기채 비중 확대.",
+             "warn"),
+        ("중립우호", "중립", "정상"):
+            ("🟡 보통 확장기",
+             "특별한 위험 신호 없음. 분할 매수 + 균형 잡힌 포트폴리오 유지.",
+             "warn"),
+        ("혼조", "고인플레", "경계"):
+            ("🔴 스태그플레이션",
+             "1970년대 전형. 주식·채권 동반 약세. 금·원자재·실물자산이 유일한 피난처였음.",
+             "neg"),
+        ("혼조", "중립", "경계"):
+            ("🟠 침체 진입 (초기)",
+             "2007년 하반기·2019년 말 패턴. 시장은 위태롭고 침체 신호 점등. 방어주 + 장기채 매수 시점.",
+             "warn"),
+        ("혼조", "중립", "정상"):
+            ("🟡 박스권 횡보",
+             "방향성 모호. 종목 선별 중요. 변동성 활용한 매매가 유리.",
+             "warn"),
+        ("약세", "고인플레", "침체임박"):
+            ("🔴 위기 국면",
+             "2008년·1980년대 초 유사. 모든 자산 약세. 현금이 왕. 회복 시 큰 기회였음.",
+             "neg"),
+        ("약세", "중립", "침체임박"):
+            ("🔴 침체 진행",
+             "2008·2020년 초기. 주식 약세, 단기 변동성 큼. 침체 후반부에 매수 기회 발생.",
+             "neg"),
+        ("약세", "디스인플레", "침체임박"):
+            ("🟡 침체 + 디플레",
+             "2008년 말 패턴. 통화완화 가속화 가능성↑. 6~12개월 후 강한 반등 종종 발생.",
+             "warn"),
+        ("약세", "중립", "경계"):
+            ("🟠 위험회피",
+             "현금/단기채 비중 확대. 시장 바닥 신호(VIX 40↑, 공포탐욕 10↓) 모니터링.",
+             "warn"),
+    }
+
+    key = (mkt_state, inf_state, rec_state)
+    if key in combos:
+        return combos[key]
+
+    # 기본값
+    if inf_score >= 60 and rec_score >= 50:
+        return ("⚠️ 스태그플레이션 위험", "물가↑ + 경기↓ 동반. 방어자산 권장.", "neg")
+    elif market_score >= 60 and inf_score < 50 and rec_score < 40:
+        return ("🟢 우호적 환경", "시장·물가·경기 모두 양호. 위험자산 비중 확대 가능.", "pos")
+    elif market_score < 40:
+        return ("🔴 시장 약세", "방어적 포지션 권장.", "neg")
+    else:
+        return ("🟡 혼조", f"시장 {mkt_state}, 인플레 {inf_state}, 침체 {rec_state}. 균형 잡힌 포트폴리오.", "warn")
+
+
+def make_market_summary(macro, breadth=None, sp_trend=None, ndx_trend=None):
+    """매크로 지표 종합 결론 (강화판)"""
     positives, negatives = [], []
-    # VIX
+    weighted_score = 50  # 가중 점수
+
+    # 1. VIX (가중치 高)
     vix = macro.get("vix", (None, None))[0]
     if vix:
-        if vix < 18: positives.append("VIX 안정")
-        elif vix > 25: negatives.append("VIX 변동성 확대")
-    # 공포탐욕
+        if vix < 15: positives.append("VIX 안정 (15↓)"); weighted_score += 6
+        elif vix < 18: positives.append("VIX 양호"); weighted_score += 3
+        elif vix > 30: negatives.append("VIX 극단 (공포)"); weighted_score -= 10
+        elif vix > 25: negatives.append("VIX 변동성 확대"); weighted_score -= 6
+        elif vix > 20: negatives.append("VIX 경계"); weighted_score -= 3
+
+    # 2. 공포탐욕 (가중치 中)
     fg = macro.get("fg", (None, None))[0]
     if fg:
-        if fg > 70: negatives.append("시장 과열")
-        elif fg < 30: positives.append("공포 구간 (역발상)")
-        elif fg > 55: positives.append("탐욕 우위")
-    # 금리
+        if fg > 80: negatives.append(f"공포탐욕 {fg:.0f} - 극단 과열"); weighted_score -= 8
+        elif fg > 70: negatives.append(f"공포탐욕 {fg:.0f} - 과열"); weighted_score -= 4
+        elif fg < 20: positives.append(f"공포탐욕 {fg:.0f} - 극단공포 (역발상)"); weighted_score += 6
+        elif fg < 30: positives.append(f"공포탐욕 {fg:.0f} - 공포구간"); weighted_score += 4
+        elif fg > 55: weighted_score += 2  # 약한 탐욕
+
+    # 3. 장단기 금리차 (가중치 高 - 침체 선행지표)
     us10y = macro.get("us10y", (None, None))[0]
     us2y = macro.get("us2y", (None, None))[0]
     if us10y and us2y:
         spread = us10y - us2y
-        if spread < 0: negatives.append("장단기 금리 역전")
-        elif spread > 0.5: positives.append("금리커브 정상화")
-    if us10y and us10y > 4.5: negatives.append("고금리 부담")
-    # 하이일드
+        if spread < 0: negatives.append(f"장단기 역전 ({spread:+.2f}%)"); weighted_score -= 10
+        elif spread > 0.8: positives.append("금리커브 정상화"); weighted_score += 5
+        elif spread < 0.3: weighted_score -= 3
+
+    # 4. 절대 금리 수준
+    if us10y:
+        if us10y > 5: negatives.append(f"美10Y {us10y:.2f}% - 극단 고금리"); weighted_score -= 8
+        elif us10y > 4.5: negatives.append(f"美10Y {us10y:.2f}% - 고금리 부담"); weighted_score -= 4
+        elif us10y < 3.5: positives.append("저금리 환경"); weighted_score += 4
+
+    # 5. 하이일드 스프레드 (신용 리스크)
     hy = macro.get("hy_spread", (None, None))[0]
     if hy:
-        if hy < 3: positives.append("신용시장 안정")
-        elif hy > 5: negatives.append("신용 스프레드 확대")
-    # 유동성
+        if hy < 3: positives.append("신용시장 안정"); weighted_score += 4
+        elif hy > 6: negatives.append("신용경색 심각"); weighted_score -= 8
+        elif hy > 5: negatives.append("신용 스프레드 확대"); weighted_score -= 4
+
+    # 6. 유동성 (연준 자산)
     fa = macro.get("fed_assets", (None, None))
     if fa[0] and fa[1]:
-        if fa[0] > fa[1]: positives.append("연준 자산 증가")
-        else: negatives.append("연준 QT 진행")
-    # 달러
+        if fa[0] > fa[1]: positives.append("연준 자산 증가 (유동성↑)"); weighted_score += 3
+        else: negatives.append("연준 QT 진행"); weighted_score -= 3
+
+    # 7. 달러
     dxy = macro.get("dxy", (None, None))[0]
     if dxy:
-        if dxy > 105: negatives.append("강달러 (위험자산 부담)")
-        elif dxy < 100: positives.append("달러 약세")
+        if dxy > 108: negatives.append(f"강달러 {dxy:.1f} (위험자산 부담)"); weighted_score -= 6
+        elif dxy > 105: negatives.append(f"강달러 {dxy:.1f}"); weighted_score -= 3
+        elif dxy < 98: positives.append("달러 약세 (위험자산 우호)"); weighted_score += 4
 
-    score = 50 + len(positives) * 8 - len(negatives) * 8
-    score = max(0, min(100, score))
+    # 8. S&P 추세 (가중치 高)
+    if sp_trend:
+        if sp_trend["above_ma200"]:
+            if sp_trend["diverg"] > 10:
+                negatives.append(f"S&P 과열 (200MA +{sp_trend['diverg']:.1f}%)"); weighted_score -= 3
+            else:
+                positives.append("S&P 200일선 위"); weighted_score += 5
+        else:
+            negatives.append(f"S&P 200일선 아래 ({sp_trend['diverg']:+.1f}%)"); weighted_score -= 7
+        if sp_trend["mom_1m"] < -5:
+            negatives.append(f"S&P 1M 모멘텀 {sp_trend['mom_1m']:+.1f}%"); weighted_score -= 4
+
+    # 9. 시장 폭 (Breadth)
+    if breadth:
+        bp = breadth["above_pct"]
+        if bp >= 60: positives.append(f"시장 폭 {bp:.0f}% (강세 광범위)"); weighted_score += 5
+        elif bp >= 50: weighted_score += 2
+        elif bp < 30: negatives.append(f"시장 폭 {bp:.0f}% (소수 종목만 강세)"); weighted_score -= 8
+        elif bp < 40: negatives.append(f"시장 폭 {bp:.0f}% 약함"); weighted_score -= 4
+
+    # 10. 비트코인 (위험자산 선행지표)
+    btc = macro.get("btc", (None, None))
+    if btc[0] and btc[1]:
+        chg = (btc[0] - btc[1]) / btc[1] * 100
+        if chg < -5: negatives.append("BTC 급락 (위험회피)"); weighted_score -= 3
+        elif chg > 5: positives.append("BTC 급등 (위험선호)"); weighted_score += 3
+
+    # 11. 금 (안전자산 선호)
+    gold = macro.get("gold", (None, None))
+    if gold[0] and gold[1]:
+        chg = (gold[0] - gold[1]) / gold[1] * 100
+        if chg > 3: negatives.append("금 급등 (안전자산 선호)"); weighted_score -= 3
+
+    # 12. 원유 (경기/인플레)
+    wti = macro.get("wti", (None, None))
+    if wti[0]:
+        if wti[0] > 110: negatives.append(f"WTI ${wti[0]:.0f} - 인플레 압력"); weighted_score -= 3
+        elif wti[0] < 60: negatives.append(f"WTI ${wti[0]:.0f} - 수요둔화 우려"); weighted_score -= 2
+
+    score = max(0, min(100, weighted_score))
 
     if score >= 70: verdict, vcls = "위험자산 우호", "pos"
     elif score >= 55: verdict, vcls = "중립적 우호", "pos"
@@ -1503,9 +1716,14 @@ try:
             st.markdown(card("달러/원", f"{krw_d[0]:,.1f}원",
                             fmt_diff(krw_d[0], krw_d[1] or krw_d[0], unit="원")), unsafe_allow_html=True)
     with m3:
-        if us10y_d[0]:
+        # yfinance 우선 (실시간), 없으면 FRED
+        us10y_yf = macro.get("us10y_yf", (None, None))
+        if us10y_yf[0]:
+            st.markdown(card("美 10년물 금리", f"{us10y_yf[0]:.2f}%",
+                            fmt_diff(us10y_yf[0], us10y_yf[1] or us10y_yf[0], unit="%p") + " · 실시간"), unsafe_allow_html=True)
+        elif us10y_d[0]:
             st.markdown(card("美 10년물 금리", f"{us10y_d[0]:.2f}%",
-                            fmt_diff(us10y_d[0], us10y_d[1] or us10y_d[0], unit="%p")), unsafe_allow_html=True)
+                            fmt_diff(us10y_d[0], us10y_d[1] or us10y_d[0], unit="%p") + " · 전일종가"), unsafe_allow_html=True)
     with m4: st.markdown(asset_card("WTI 원유", macro["wti"], prefix="$"), unsafe_allow_html=True)
 
     # ===== 유동성 (FRED) =====
@@ -1533,7 +1751,9 @@ try:
     with l4: st.markdown(liq_card("TGA 잔액", macro["tga"], "재무부 계정"), unsafe_allow_html=True)
 
     # ===== 시장 종합 결론 =====
-    mkt = make_market_summary(macro)
+    breadth = get_market_breadth()
+    sp_trend = get_index_trend("^GSPC")
+    mkt = make_market_summary(macro, breadth=breadth, sp_trend=sp_trend)
     pos_html = "<br>".join(f"<span class='pos'>✓ {p}</span>" for p in mkt["positives"]) or "<span style='color:#64748b;'>특이사항 없음</span>"
     neg_html = "<br>".join(f"<span class='neg'>✗ {n}</span>" for n in mkt["negatives"]) or "<span style='color:#64748b;'>특이사항 없음</span>"
 
@@ -2099,6 +2319,17 @@ try:
         </div>""", unsafe_allow_html=True)
 
     st.caption("📚 **인플레 지표**: CPI, Core CPI, PPI, PCE (Fed 목표 2%) · **경기침체 지표**: 장단기금리역전, 삼의법칙, 실업률, LEI 선행지수, ISM PMI, NY연준 침체확률, 하이일드 스프레드")
+
+    # ===== 시장 × 인플레 × 침체 조합 진단 =====
+    combo_name, combo_desc, combo_cls = combined_diagnosis(mkt["score"], eco["inf_score"], eco["rec_score"])
+    st.markdown(f"""<div class='card' style='margin-top:18px; padding:22px 26px; border-left:6px solid {"#ef4444" if combo_cls == "neg" else "#f59e0b" if combo_cls == "warn" else "#22c55e"}; background:linear-gradient(135deg, rgba(59,130,246,0.04), transparent);'>
+    <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;'>
+    <span style='font-size:13px; color:#94a3b8; font-weight:700; letter-spacing:1px;'>🎯 시장 × 인플레 × 침체 조합 진단</span>
+    <div style='font-size:12px; color:#64748b;'>시장 {mkt["score"]:.0f} · 인플레 {eco["inf_score"]:.0f} · 침체 {eco["rec_score"]:.0f}</div>
+    </div>
+    <div class='{combo_cls}' style='font-size:22px; font-weight:900; margin-bottom:10px;'>{combo_name}</div>
+    <div style='color:#cbd5e1; font-size:13px; line-height:1.7;'>📜 {combo_desc}</div>
+    </div>""", unsafe_allow_html=True)
 
 except Exception as e:
     st.error(f"오류: {e}")
