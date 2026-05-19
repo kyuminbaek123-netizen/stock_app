@@ -149,6 +149,8 @@ def get_macro_all():
     m["lei"] = fred_get("USSLIND")              # 선행지수
     m["ism_pmi"] = fred_get("NAPM")             # ISM PMI
     m["recession_prob"] = fred_get("RECPROUSM156N")  # NY연준 경기침체 확률
+    m["gdp"] = fred_get("A191RL1Q225SBEA")          # 실질 GDP 성장률 (분기)
+    m["payrolls"] = fred_get("PAYEMS")                # 비농업 고용
     # YoY 변화율
     m["cpi_yoy_v"] = fred_yoy("CPIAUCSL")
     m["core_cpi_yoy"] = fred_yoy("CPILFESL")
@@ -1386,6 +1388,93 @@ def get_index_trend(ticker):
         return None
 
 
+def detect_stagflation(macro):
+    """스태그플레이션 정밀 판정
+    4가지 조건 모두 충족해야 진짜 스태그플레이션:
+    1) CPI ≥ 4% (높은 인플레)
+    2) GDP < 1% (성장 둔화)
+    3) 실업률 상승 (전월 대비)
+    4) Core CPI ≥ 3% (끈적한 인플레)
+    """
+    cpi = macro.get("cpi_yoy_v", (None, None))[0]
+    core_cpi = macro.get("core_cpi_yoy", (None, None))[0]
+    gdp = macro.get("gdp", (None, None))[0]
+    unemploy = macro.get("unemploy", (None, None))
+
+    conditions = []
+    met = 0
+
+    # 1. CPI ≥ 4%
+    if cpi is not None:
+        c1 = cpi >= 4
+        conditions.append({
+            "name": "높은 인플레", "metric": f"CPI {cpi:.1f}%",
+            "threshold": "≥ 4.0%", "met": c1,
+            "desc": "물가 압력이 위험 수준"
+        })
+        if c1: met += 1
+
+    # 2. Core CPI ≥ 3% (끈적함)
+    if core_cpi is not None:
+        c2 = core_cpi >= 3
+        conditions.append({
+            "name": "끈적한 인플레", "metric": f"Core CPI {core_cpi:.1f}%",
+            "threshold": "≥ 3.0%", "met": c2,
+            "desc": "근원 물가도 높음 = 단기에 안 잡힘"
+        })
+        if c2: met += 1
+
+    # 3. GDP < 1.5%
+    if gdp is not None:
+        c3 = gdp < 1.5
+        conditions.append({
+            "name": "성장 둔화", "metric": f"실질GDP {gdp:.1f}%",
+            "threshold": "< 1.5%", "met": c3,
+            "desc": "경제 성장 약화"
+        })
+        if c3: met += 1
+
+    # 4. 실업률 상승 (전월 대비 +0.2%p)
+    if unemploy[0] is not None and unemploy[1] is not None:
+        u_chg = unemploy[0] - unemploy[1]
+        c4 = u_chg >= 0.2 or unemploy[0] >= 4.5
+        conditions.append({
+            "name": "고용 둔화", "metric": f"실업률 {unemploy[0]:.1f}% ({u_chg:+.1f})",
+            "threshold": "상승 or ≥ 4.5%", "met": c4,
+            "desc": "노동시장 약화"
+        })
+        if c4: met += 1
+
+    total = len(conditions)
+    if total == 0:
+        return {"status": "측정불가", "cls": "warn", "msg": "데이터 부족", "conditions": [], "met": 0, "total": 0}
+
+    ratio = met / total
+    if met == total and total == 4:
+        status = "🔴 스태그플레이션 확정"
+        cls = "neg"
+        msg = f"4개 조건 모두 충족 ({met}/{total}). 1970년대 후반 미국, 2022년 영국 유사. 주식·채권 동반 약세 가능성 高. 금/원자재/필수소비재 비중 권장."
+    elif ratio >= 0.75:
+        status = "🟠 스태그플레이션 임박"
+        cls = "neg"
+        msg = f"{met}/{total} 조건 충족. 한두 지표만 더 악화되면 본격 진입. 방어 포지션 구축 시작 권장."
+    elif ratio >= 0.5:
+        status = "🟡 스태그플레이션 우려"
+        cls = "warn"
+        msg = f"{met}/{total} 조건 충족. 잠재적 위험 존재하나 아직 본격 진입 아님. 주시 필요."
+    elif ratio >= 0.25:
+        status = "🟢 부분 신호"
+        cls = "warn"
+        msg = f"{met}/{total} 조건만 충족. 일부 우려 있으나 스태그플레이션은 아님."
+    else:
+        status = "🟢 스태그 위험 없음"
+        cls = "pos"
+        msg = f"{met}/{total} 조건 충족. 정상 경제 환경."
+
+    return {"status": status, "cls": cls, "msg": msg,
+            "conditions": conditions, "met": met, "total": total}
+
+
 def combined_diagnosis(market_score, inf_score, rec_score):
     """시장 상황 + 인플레 + 침체 조합 → 과거 사례 기반 진단"""
     # 시장 강도
@@ -2319,6 +2408,46 @@ try:
         </div>""", unsafe_allow_html=True)
 
     st.caption("📚 **인플레 지표**: CPI, Core CPI, PPI, PCE (Fed 목표 2%) · **경기침체 지표**: 장단기금리역전, 삼의법칙, 실업률, LEI 선행지수, ISM PMI, NY연준 침체확률, 하이일드 스프레드")
+
+    # ===== 스태그플레이션 정밀 판정 =====
+    stag = detect_stagflation(macro)
+    if stag["total"] > 0:
+        cond_html = ""
+        for c in stag["conditions"]:
+            check_icon = "✅" if c["met"] else "⬜"
+            check_cls = "pos" if c["met"] else ""
+            cond_html += f"""<div style='display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px dashed #334155;'>
+            <div style='display:flex; align-items:center; gap:10px;'>
+            <span style='font-size:18px;'>{check_icon}</span>
+            <div>
+            <div style='color:#f1f5f9; font-weight:700; font-size:14px;'>{c["name"]}</div>
+            <div style='color:#64748b; font-size:11px;'>{c["desc"]}</div>
+            </div>
+            </div>
+            <div style='text-align:right;'>
+            <div class='{check_cls}' style='font-weight:800; font-size:14px;'>{c["metric"]}</div>
+            <div style='color:#64748b; font-size:11px;'>기준: {c["threshold"]}</div>
+            </div>
+            </div>"""
+
+        ratio_pct = stag["met"] / stag["total"] * 100
+        bar_color = "#ef4444" if ratio_pct >= 75 else "#f59e0b" if ratio_pct >= 50 else "#22c55e"
+
+        st.markdown(f"""<div class='card' style='margin-top:18px; padding:22px 26px; border-left:6px solid {bar_color};'>
+        <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;'>
+        <span style='font-size:13px; color:#94a3b8; font-weight:700; letter-spacing:1px;'>🌀 스태그플레이션 정밀 판정</span>
+        <div style='text-align:right;'>
+        <span class='{stag["cls"]}' style='font-size:22px; font-weight:900;'>{stag["status"]}</span>
+        <div style='color:#64748b; font-size:12px; margin-top:2px;'>{stag["met"]} / {stag["total"]} 조건 충족</div>
+        </div>
+        </div>
+        <div style='background:#0a0e1a; border-radius:4px; height:8px; margin-bottom:16px; overflow:hidden;'>
+        <div style='background:{bar_color}; height:100%; width:{ratio_pct}%;'></div>
+        </div>
+        <div style='color:#cbd5e1; font-size:13px; line-height:1.6; margin-bottom:14px; padding-bottom:14px; border-bottom:1px solid #334155;'>💡 {stag["msg"]}</div>
+        <div style='color:#94a3b8; font-size:12px; font-weight:700; margin-bottom:8px;'>📋 4가지 충족 조건 (모두 만족시 스태그플레이션 확정)</div>
+        {cond_html}
+        </div>""", unsafe_allow_html=True)
 
     # ===== 시장 × 인플레 × 침체 조합 진단 =====
     combo_name, combo_desc, combo_cls = combined_diagnosis(mkt["score"], eco["inf_score"], eco["rec_score"])
