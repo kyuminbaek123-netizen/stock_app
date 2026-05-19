@@ -846,6 +846,66 @@ def smooth_series(series, window=5):
     return series.rolling(window, min_periods=1, center=True).mean()
 
 
+# ============ 테마별 자금흐름 ============
+THEMES = {
+    "🏛️ M7 (빅테크)": {
+        "tickers": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"],
+        "desc": "글로벌 시총 상위 빅테크 7개"
+    },
+    "🤖 AI 인프라": {
+        "tickers": ["NVDA", "AMD", "TSM", "ASML", "AVGO", "SMCI", "ARM"],
+        "desc": "AI 칩·반도체·서버"
+    },
+    "⚡ AI 전력 (SMR/원전)": {
+        "tickers": ["VST", "CEG", "SMR", "NNE", "OKLO", "BWXT", "TLN"],
+        "desc": "AI 데이터센터 전력 공급"
+    },
+    "💰 핀테크/크립토": {
+        "tickers": ["COIN", "MSTR", "PYPL", "HOOD", "MARA", "RIOT", "SQ"],
+        "desc": "디지털 금융·암호화폐"
+    },
+    "🛢️ 에너지/원자재": {
+        "tickers": ["XOM", "CVX", "OXY", "COP", "EOG", "SLB", "MPC"],
+        "desc": "원유·천연가스·정유"
+    },
+    "🌏 신흥국 ETF": {
+        "tickers": ["EWY", "EWJ", "MCHI", "INDA", "EWZ", "VNM", "EEM"],
+        "desc": "한국·일본·중국·인도·브라질·베트남"
+    },
+}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_theme_flow():
+    """테마별 종목 1주/1개월 수익률"""
+    result = {}
+    for theme, info in THEMES.items():
+        items = []
+        for tk in info["tickers"]:
+            try:
+                h = yf.Ticker(tk).history(period="3mo")
+                if len(h) < 21: continue
+                curr = float(h['Close'].iloc[-1])
+                w_ago = float(h['Close'].iloc[-5]) if len(h) >= 5 else curr
+                m_ago = float(h['Close'].iloc[-21]) if len(h) >= 21 else curr
+                week_chg = (curr - w_ago) / w_ago * 100
+                month_chg = (curr - m_ago) / m_ago * 100
+                items.append({
+                    "ticker": tk, "price": curr,
+                    "week": week_chg, "month": month_chg
+                })
+            except Exception:
+                continue
+        if items:
+            avg_week = float(np.mean([i['week'] for i in items]))
+            avg_month = float(np.mean([i['month'] for i in items]))
+            result[theme] = {
+                "items": items, "desc": info["desc"],
+                "avg_week": avg_week, "avg_month": avg_month
+            }
+    return result
+
+
 # ============ S&P500 스크리너 (주 1회 캐시) ============
 SP500_TOP100 = [
     "AAPL","MSFT","NVDA","GOOGL","AMZN","META","TSLA","BRK-B","AVGO","JPM",
@@ -1993,6 +2053,79 @@ try:
     <div style='font-size:13px; line-height:1.8;'>{neg_html}</div>
     </div>
     </div>""", unsafe_allow_html=True)
+
+    # ===== 테마별 자금흐름 (Sector Rotation) =====
+    st.markdown("<div class='section-h'>💸 테마별 자금흐름 <span style='color:#6b7280; font-weight:400; font-size:11px; margin-left:8px;'>· 어느 섹터로 돈이 들어오나</span></div>", unsafe_allow_html=True)
+
+    with st.spinner("테마 분석 중..."):
+        themes = get_theme_flow()
+
+    if themes:
+        # 테마 카드를 2열 그리드로
+        theme_list = list(themes.items())
+        for row_start in range(0, len(theme_list), 2):
+            cols = st.columns(2)
+            for col_idx, (theme_name, t_data) in enumerate(theme_list[row_start:row_start+2]):
+                with cols[col_idx]:
+                    avg_w = t_data["avg_week"]
+                    avg_m = t_data["avg_month"]
+                    w_cls = "pos" if avg_w > 0 else "neg"
+                    m_cls = "pos" if avg_m > 0 else "neg"
+                    # 자금 강도 (월간 기준)
+                    if avg_m > 5:
+                        flow_label = "🔥 강한 유입"; flow_color = "#4ade80"
+                    elif avg_m > 2:
+                        flow_label = "📈 유입"; flow_color = "#4ade80"
+                    elif avg_m > -2:
+                        flow_label = "⚪ 중립"; flow_color = "#9ca3af"
+                    elif avg_m > -5:
+                        flow_label = "📉 유출"; flow_color = "#f87171"
+                    else:
+                        flow_label = "❄️ 강한 유출"; flow_color = "#f87171"
+
+                    # 개별 종목 미니 리스트
+                    items_html = ""
+                    sorted_items = sorted(t_data["items"], key=lambda x: x["month"], reverse=True)
+                    for it in sorted_items:
+                        i_cls = "pos" if it["month"] > 0 else "neg"
+                        items_html += f"""<div style='display:flex; justify-content:space-between; padding:5px 0; font-size:12px; border-bottom:1px solid #14171c;'>
+                        <span style='color:#d1d5db; font-family:JetBrains Mono, monospace; font-weight:600;'>{it["ticker"]}</span>
+                        <span class='{i_cls}' style='font-family:JetBrains Mono, monospace; font-weight:600;'>{it["month"]:+.1f}%</span>
+                        </div>"""
+
+                    st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid {flow_color}; margin-bottom:16px;'>
+                    <div style='display:flex; justify-content:space-between; align-items:start; margin-bottom:8px;'>
+                    <div>
+                    <div style='font-size:14px; font-weight:700; color:#fafafa;'>{theme_name}</div>
+                    <div style='font-size:11px; color:#6b7280; margin-top:2px;'>{t_data["desc"]}</div>
+                    </div>
+                    <div style='text-align:right;'>
+                    <div style='font-size:11px; color:{flow_color}; font-weight:600;'>{flow_label}</div>
+                    </div>
+                    </div>
+                    <div style='display:flex; gap:16px; padding:10px 0; border-bottom:1px solid #1c1f26; margin-bottom:6px;'>
+                    <div style='flex:1;'>
+                    <div style='font-size:10px; color:#6b7280; letter-spacing:0.05em;'>1주 평균</div>
+                    <div class='{w_cls}' style='font-size:18px; font-weight:700; font-family:JetBrains Mono, monospace;'>{avg_w:+.2f}%</div>
+                    </div>
+                    <div style='flex:1;'>
+                    <div style='font-size:10px; color:#6b7280; letter-spacing:0.05em;'>1개월 평균</div>
+                    <div class='{m_cls}' style='font-size:18px; font-weight:700; font-family:JetBrains Mono, monospace;'>{avg_m:+.2f}%</div>
+                    </div>
+                    </div>
+                    {items_html}
+                    </div>""", unsafe_allow_html=True)
+
+        # 테마 랭킹 한줄 요약
+        sorted_themes = sorted(themes.items(), key=lambda x: x[1]["avg_month"], reverse=True)
+        winner = sorted_themes[0]
+        loser = sorted_themes[-1]
+        st.markdown(f"""<div class='card' style='padding:14px 18px; margin-top:8px;'>
+        <span style='color:#6b7280; font-size:12px;'>📊 1개월 자금흐름 종합 · </span>
+        <span class='pos' style='font-weight:700;'>최대 유입: {winner[0]} ({winner[1]["avg_month"]:+.2f}%)</span>
+        <span style='color:#6b7280; margin:0 8px;'>·</span>
+        <span class='neg' style='font-weight:700;'>최대 유출: {loser[0]} ({loser[1]["avg_month"]:+.2f}%)</span>
+        </div>""", unsafe_allow_html=True)
 
     st.markdown("---")
 
