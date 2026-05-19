@@ -22,39 +22,161 @@ st.set_page_config(page_title="Alpha Pro Terminal v3", layout="wide", page_icon=
 # ============ 스타일 ============
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap');
-html, body, [class*="css"] { font-family: 'Inter', 'Noto Sans KR', sans-serif; }
-.stApp { background: #0a0e1a; color: #e2e8f0; }
-.block-container { padding-top: 1.5rem; max-width: 1400px; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
-.title-bar { font-size: 22px; font-weight: 800; color: #f1f5f9; margin-bottom: 4px; }
-.title-sub { font-size: 13px; color: #64748b; margin-bottom: 18px; }
+html, body, [class*="css"] {
+    font-family: 'Inter', 'Noto Sans KR', -apple-system, sans-serif;
+    letter-spacing: -0.01em;
+}
+.stApp { background: #08090d; color: #e5e7eb; }
+.block-container { padding-top: 1.5rem; padding-bottom: 3rem; max-width: 1400px; }
 
-.card { background: #111827; border: 1px solid #1f2937; border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; }
-.card-title { font-size: 12px; color: #94a3b8; font-weight: 600; margin-bottom: 4px; letter-spacing: 0.5px; }
-.card-value { font-size: 26px; font-weight: 900; color: #f1f5f9; line-height: 1.1; }
-.card-sub { font-size: 11px; color: #64748b; margin-top: 4px; }
-.pos { color: #22c55e; }
-.neg { color: #ef4444; }
-.warn { color: #f59e0b; }
+/* 숫자는 무조건 고정폭 */
+.num, .card-value, .v-main, .v-score {
+    font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace !important;
+    font-feature-settings: "tnum" 1, "zero" 1;
+    letter-spacing: -0.02em;
+}
 
-.section-h { font-size: 14px; font-weight: 800; color: #f1f5f9; margin: 18px 0 10px 0; display: flex; align-items: center; gap: 6px; }
+/* 타이틀 */
+.title-bar {
+    font-size: 24px; font-weight: 800; color: #fafafa;
+    letter-spacing: -0.02em; margin-bottom: 2px;
+}
+.title-sub { font-size: 12px; color: #6b7280; margin-bottom: 32px; font-weight: 500; }
 
-.verdict { border-radius: 12px; padding: 22px 24px; color: white; margin-bottom: 14px; }
-.v-strong-buy { background: linear-gradient(135deg, #16a34a, #15803d); }
-.v-buy { background: linear-gradient(135deg, #22c55e, #16a34a); }
-.v-hold { background: linear-gradient(135deg, #eab308, #ca8a04); }
-.v-sell { background: linear-gradient(135deg, #f97316, #ea580c); }
-.v-strong-sell { background: linear-gradient(135deg, #dc2626, #b91c1c); }
-.v-label { font-size: 12px; opacity: 0.9; font-weight: 700; letter-spacing: 1px; }
-.v-main { font-size: 36px; font-weight: 900; margin-top: 4px; }
-.v-score { font-size: 14px; opacity: 0.95; margin-top: 6px; }
+/* 섹션 헤더 - 여백 ↑ */
+.section-h {
+    font-size: 13px; font-weight: 700; color: #d1d5db;
+    margin: 36px 0 14px 0;
+    display: flex; align-items: center; gap: 8px;
+    letter-spacing: 0.02em;
+}
 
-.stButton>button { background: #2563eb; color: white; border: none; font-weight: 700; border-radius: 8px; height: 44px; width: 100%; }
-.stButton>button:hover { background: #1d4ed8; }
-.stTextInput input { background: #111827 !important; color: #f1f5f9 !important; border: 1px solid #334155 !important; }
+/* 카드 - 보더 약하게, 여백 ↑ */
+.card {
+    background: #0f1117;
+    border: 1px solid #1c1f26;
+    border-radius: 10px;
+    padding: 18px 22px;
+    margin-bottom: 12px;
+    transition: border-color 0.2s;
+}
+.card:hover { border-color: #2d3138; }
+
+.card-title {
+    font-size: 11px;
+    color: #6b7280;
+    font-weight: 500;
+    margin-bottom: 8px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+.card-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: #fafafa;
+    line-height: 1.1;
+}
+.card-sub {
+    font-size: 11px;
+    color: #6b7280;
+    margin-top: 8px;
+    font-weight: 500;
+}
+
+/* 색은 신호로만 - 채도 살짝 줄임 */
+.pos { color: #4ade80; }
+.neg { color: #f87171; }
+.warn { color: #fbbf24; }
+
+/* AI 종합 의견 - 색상 절제 */
+.verdict {
+    border-radius: 12px;
+    padding: 28px 32px;
+    color: white;
+    margin: 20px 0 24px 0;
+    border: 1px solid transparent;
+}
+.v-strong-buy { background: #15803d; }
+.v-buy { background: #16a34a; }
+.v-hold { background: #1f2937; border-color: #fbbf24; color: #fbbf24; }
+.v-sell { background: #dc2626; }
+.v-strong-sell { background: #991b1b; }
+.v-label {
+    font-size: 10px; opacity: 0.75; font-weight: 600;
+    letter-spacing: 0.15em; text-transform: uppercase;
+    font-family: 'Inter', sans-serif !important;
+}
+.v-main {
+    font-size: 38px; font-weight: 800; margin-top: 6px;
+}
+.v-score {
+    font-size: 13px; opacity: 0.85; margin-top: 10px;
+    font-weight: 500;
+}
+
+/* 버튼 - 절제된 톤 */
+.stButton>button {
+    background: #1f2937;
+    color: #fafafa;
+    border: 1px solid #374151;
+    font-weight: 600;
+    border-radius: 8px;
+    height: 42px;
+    width: 100%;
+    transition: all 0.15s;
+}
+.stButton>button:hover {
+    background: #374151;
+    border-color: #4b5563;
+}
+
+/* 인풋 */
+.stTextInput input {
+    background: #0f1117 !important;
+    color: #fafafa !important;
+    border: 1px solid #1c1f26 !important;
+    border-radius: 8px !important;
+    font-family: 'JetBrains Mono', monospace !important;
+}
+.stTextInput input:focus { border-color: #374151 !important; }
+
+/* 테이블 */
+.stDataFrame, [data-testid="stDataFrame"] {
+    background: #0f1117 !important;
+    border: 1px solid #1c1f26 !important;
+    border-radius: 8px !important;
+}
+.stDataFrame td, .stDataFrame th {
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 12px !important;
+}
+
+/* 구분선 - 여백 기반 */
+hr {
+    border: none !important;
+    border-top: 1px solid #1c1f26 !important;
+    margin: 32px 0 !important;
+}
+
+/* 캡션 */
+.stCaption, [data-testid="stCaptionContainer"] {
+    color: #4b5563 !important;
+    font-size: 11px !important;
+}
+
+/* 체크박스 */
+.stCheckbox > label > div[data-testid="stMarkdownContainer"] p {
+    font-size: 13px !important;
+    color: #d1d5db !important;
+    font-weight: 500;
+}
+
+.stTextInput label, .stCheckbox label { color: #9ca3af !important; }
 
 #MainMenu, footer, header { visibility: hidden; }
+[data-testid="stToolbar"] { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1959,16 +2081,16 @@ try:
     high_p = plot_hist.loc[high_idx, 'Close']
 
     milestones = [
-        (high_idx, high_p, "고점", ccy + f"{high_p:,.0f}", "#f59e0b", "top center"),
-        (low_idx, low_p, "저점", ccy + f"{low_p:,.0f}", "#ef4444", "bottom center"),
-        (hist.index[-1], curr, "현재", ccy + f"{curr:,.0f}", "#3b82f6", "top center"),
-        (dates[-1], target["final"], "AI 목표", ccy + f"{target['final']:,.0f}", "#22c55e", "top center"),
+        (high_idx, high_p, "고점", ccy + f"{high_p:,.0f}", "#9ca3af", "top center"),
+        (low_idx, low_p, "저점", ccy + f"{low_p:,.0f}", "#9ca3af", "bottom center"),
+        (hist.index[-1], curr, "현재", ccy + f"{curr:,.0f}", "#fafafa", "top center"),
+        (dates[-1], target["final"], "AI 목표", ccy + f"{target['final']:,.0f}", "#4ade80", "top center"),
     ]
 
     for d, p, label, price_str, c, pos in milestones:
         text_html = f"{label} {price_str}"
         fig.add_trace(go.Scatter(x=[d], y=[p], mode='markers+text',
-                                 marker=dict(size=14, color=c, line=dict(width=2.5, color='#0a0e1a')),
+                                 marker=dict(size=14, color=c, line=dict(width=2.5, color='#08090d')),
                                  text=[text_html], textposition=pos,
                                  textfont=dict(color='#e2e8f0', size=12, family='Inter'),
                                  showlegend=False, hoverinfo='skip',
@@ -1976,10 +2098,10 @@ try:
 
     fig.update_layout(
         height=520, margin=dict(l=10, r=10, t=40, b=10),
-        plot_bgcolor='#0a0e1a', paper_bgcolor='#0a0e1a',
+        plot_bgcolor='#08090d', paper_bgcolor='#08090d',
         font=dict(family="Inter", color='#e2e8f0', size=11),
-        xaxis=dict(gridcolor='#1f2937', showgrid=True, zeroline=False),
-        yaxis=dict(gridcolor='#1f2937', showgrid=True, zeroline=False),
+        xaxis=dict(gridcolor='#1c1f26', showgrid=True, zeroline=False),
+        yaxis=dict(gridcolor='#1c1f26', showgrid=True, zeroline=False),
         legend=dict(orientation="h", y=1.08, x=0, bgcolor='rgba(0,0,0,0)'),
         hovermode='x unified'
     )
@@ -2098,7 +2220,7 @@ try:
             ))
             fig_d.update_layout(
                 height=280, margin=dict(l=10, r=10, t=10, b=10),
-                plot_bgcolor='#0a0e1a', paper_bgcolor='#0a0e1a',
+                plot_bgcolor='#08090d', paper_bgcolor='#08090d',
                 showlegend=False,
                 annotations=[dict(
                     text=f"<b style='color:#22c55e; font-size:22px;'>{ratio_pos:.0f}%</b><br><span style='color:#94a3b8; font-size:11px;'>긍정</span>",
@@ -2241,10 +2363,10 @@ try:
                                   text=[f"{ccy}{p:,.2f}" for p in a_data['가격']],
                                   textposition='outside'))
         fig_a.update_layout(height=280, margin=dict(l=10, r=80, t=10, b=10),
-                            plot_bgcolor='#0a0e1a', paper_bgcolor='#0a0e1a',
+                            plot_bgcolor='#08090d', paper_bgcolor='#08090d',
                             font=dict(color='#e2e8f0', size=12),
-                            xaxis=dict(gridcolor='#1f2937'),
-                            yaxis=dict(gridcolor='#1f2937'),
+                            xaxis=dict(gridcolor='#1c1f26'),
+                            yaxis=dict(gridcolor='#1c1f26'),
                             showlegend=False)
         st.plotly_chart(fig_a, use_container_width=True)
 
