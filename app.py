@@ -2039,48 +2039,135 @@ try:
     </div>
     </div>""", unsafe_allow_html=True)
 
-    # ===== 섹터별 자금 흐름 =====
+    # ===== 섹터별 자금 흐름 (방사형 마인드맵) =====
     st.markdown("<div class='section-h'>💸 섹터별 자금 흐름 <span style='color:#6b7280; font-weight:400; font-size:11px; margin-left:8px;'>· 1개월 등락률 · 15개 섹터 ETF</span></div>", unsafe_allow_html=True)
 
     with st.spinner("섹터 분석 중..."):
         sectors = get_sector_flow()
 
     if sectors:
-        # 가로 막대 차트
-        names = [s["name"] for s in sectors]
-        values = [s["month"] for s in sectors]
-        colors = ["#4ade80" if v > 0 else "#f87171" for v in values]
+        import math
+        n = len(sectors)
 
-        fig_sec = go.Figure(go.Bar(
-            x=values, y=names, orientation='h',
-            marker=dict(color=colors, line=dict(width=0)),
-            text=[f"{v:+.2f}%" for v in values],
-            textposition='outside',
-            textfont=dict(family='JetBrains Mono', size=11, color='#d1d5db'),
-            hovertemplate='<b>%{y}</b><br>%{x:.2f}%<extra></extra>'
-        ))
-        fig_sec.update_layout(
-            height=480,
-            margin=dict(l=10, r=60, t=10, b=20),
-            plot_bgcolor='#08090d', paper_bgcolor='#08090d',
-            font=dict(family="Inter", color='#d1d5db', size=11),
-            xaxis=dict(
-                showgrid=True, gridcolor='#1c1f26', zeroline=True,
-                zerolinecolor='#374151', zerolinewidth=1,
-                ticksuffix='%', tickfont=dict(family='JetBrains Mono')
-            ),
-            yaxis=dict(showgrid=False, autorange='reversed',
-                       tickfont=dict(size=12, color='#fafafa')),
+        # 노드 좌표 계산 (방사형)
+        fig_map = go.Figure()
+
+        # 선 (중앙 → 각 섹터) 먼저 그리기
+        line_traces_in = {"x": [], "y": []}
+        line_traces_out = {"x": [], "y": []}
+
+        node_x, node_y, node_text, node_color, node_size = [], [], [], [], []
+
+        # 중앙 노드
+        node_x.append(0); node_y.append(0)
+        node_text.append("<b>자금 흐름</b><br>Sector Rotation")
+        node_color.append("#fafafa"); node_size.append(75)
+
+        # 섹터 노드들 방사형 배치
+        for i, s in enumerate(sectors):
+            angle = 2 * math.pi * i / n - math.pi / 2  # 12시부터 시계방향
+            radius = 1.0
+            x = math.cos(angle) * radius
+            y = math.sin(angle) * radius
+
+            # 라벨 위치는 노드보다 살짝 바깥
+            label_r = 1.25
+            lx = math.cos(angle) * label_r
+            ly = math.sin(angle) * label_r
+
+            node_x.append(x); node_y.append(y)
+            node_text.append(f"<b>{s['name']}</b><br><span style='font-family:monospace; font-size:12px;'>{s['month']:+.2f}%</span>")
+
+            # 색상 (월 등락률 기준)
+            v = s['month']
+            if v > 10: c = "#15803d"      # 강한 유입
+            elif v > 5: c = "#22c55e"
+            elif v > 0: c = "#4ade80"
+            elif v > -5: c = "#f87171"
+            elif v > -10: c = "#ef4444"
+            else: c = "#991b1b"           # 강한 유출
+            node_color.append(c)
+            # 크기는 절댓값 기준
+            node_size.append(30 + min(abs(v) * 2.5, 35))
+
+            # 선 (유입은 녹색, 유출은 빨강)
+            if v > 0:
+                line_traces_in["x"].extend([0, x, None])
+                line_traces_in["y"].extend([0, y, None])
+            else:
+                line_traces_out["x"].extend([0, x, None])
+                line_traces_out["y"].extend([0, y, None])
+
+        # 유입 선 (녹색)
+        if line_traces_in["x"]:
+            fig_map.add_trace(go.Scatter(
+                x=line_traces_in["x"], y=line_traces_in["y"],
+                mode='lines', line=dict(color='rgba(74, 222, 128, 0.35)', width=1.5),
+                hoverinfo='skip', showlegend=False
+            ))
+        # 유출 선 (빨강)
+        if line_traces_out["x"]:
+            fig_map.add_trace(go.Scatter(
+                x=line_traces_out["x"], y=line_traces_out["y"],
+                mode='lines', line=dict(color='rgba(248, 113, 113, 0.35)', width=1.5),
+                hoverinfo='skip', showlegend=False
+            ))
+
+        # 노드 (원)
+        fig_map.add_trace(go.Scatter(
+            x=node_x, y=node_y, mode='markers',
+            marker=dict(size=node_size, color=node_color,
+                        line=dict(color='#0a0e1a', width=2)),
+            hoverinfo='text', hovertext=node_text,
             showlegend=False
+        ))
+
+        # 노드 라벨 (섹터명 + 등락률)
+        for i, s in enumerate(sectors):
+            angle = 2 * math.pi * i / n - math.pi / 2
+            # 노드 크기에 따라 라벨 거리 조정
+            r = 1.0 + (node_size[i+1] / 200) + 0.13
+            lx = math.cos(angle) * r
+            ly = math.sin(angle) * r
+
+            v = s['month']
+            v_color = "#4ade80" if v > 0 else "#f87171"
+            sign = "+" if v > 0 else ""
+
+            fig_map.add_annotation(
+                x=lx, y=ly,
+                text=f"<b style='color:#fafafa'>{s['name']}</b><br><span style='color:{v_color}; font-family:JetBrains Mono;'>{sign}{v:.2f}%</span>",
+                showarrow=False,
+                font=dict(size=11, family="Inter, JetBrains Mono"),
+                xanchor='center', yanchor='middle'
+            )
+
+        # 중앙 라벨
+        fig_map.add_annotation(
+            x=0, y=0,
+            text="<b style='color:#08090d; font-size:13px;'>CAPITAL<br>FLOWS</b>",
+            showarrow=False,
+            font=dict(size=12, family="Inter"),
+            xanchor='center', yanchor='middle'
         )
-        st.plotly_chart(fig_sec, use_container_width=True)
+
+        fig_map.update_layout(
+            height=620, margin=dict(l=20, r=20, t=20, b=20),
+            plot_bgcolor='#08090d', paper_bgcolor='#08090d',
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
+                       range=[-1.7, 1.7]),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
+                       range=[-1.6, 1.6], scaleanchor="x", scaleratio=1),
+            showlegend=False, hovermode='closest'
+        )
+        st.plotly_chart(fig_map, use_container_width=True)
 
         # 요약
         inflow = [s for s in sectors if s["month"] > 0]
         outflow = [s for s in sectors if s["month"] <= 0]
         winner = sectors[0]
         loser = sectors[-1]
-        st.markdown(f"""<div class='card' style='padding:14px 18px; margin-top:6px;'>
+        st.markdown(f"""<div class='card' style='padding:14px 18px; margin-top:-6px;'>
         <span class='pos' style='font-weight:700; font-size:13px;'>유입 우세 {len(inflow)}↑</span>
         <span style='color:#6b7280; margin:0 6px;'>·</span>
         <span class='neg' style='font-weight:700; font-size:13px;'>유출 {len(outflow)}↓</span>
