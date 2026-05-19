@@ -1644,6 +1644,59 @@ def detect_stagflation(macro):
             "conditions": conditions, "met": met, "total": total}
 
 
+def fed_scenarios(market_score, inf_score, rec_score):
+    """현재 상황에서 Fed 금리 정책에 따른 결과 해석"""
+    # 인플레/침체 정도로 시나리오 우선순위 결정
+    high_inf = inf_score >= 60
+    low_inf = inf_score <= 35
+    high_rec = rec_score >= 55
+    low_rec = rec_score <= 35
+
+    # 인상 시나리오
+    if high_inf and not high_rec:
+        # 인플레 高 + 경기 안정 = 후기 사이클
+        hike = ("🔴 침체 가속화 가능성 高",
+                "Fed 긴축으로 결국 경기 둔화 → 6~18개월 후 침체 진입 가능. 1989·2000·2007년 패턴. 시장은 단기 조정 → 중기 약세 전환 가능.")
+        cut = ("🟡 인플레 재점화 위험",
+               "물가가 아직 높은데 금리 인하시 1970년대처럼 인플레 재폭발 가능. 단기 시장 환호 후 중기 부담.")
+        hold = ("🟢 가장 안전한 선택",
+                "현재 정책 유지로 인플레 자연 둔화 + 경기 연착륙 시도. 다만 시장은 횡보·약세 가능.")
+    elif high_inf and high_rec:
+        # 스태그플레이션
+        hike = ("🔴 침체 확정",
+                "이미 침체 신호 있는데 추가 긴축 = 1980년 볼커 쇼크 재현. 주식·채권·부동산 동반 폭락 위험.")
+        cut = ("🟠 스태그플레이션 고착",
+               "물가↑ 상태에서 금리 인하 = 1970년대 재현. 인플레는 더 끈적해지고 경기 회복도 더딤.")
+        hold = ("🟡 최악은 면함",
+                "정책 유지로 시간 벌기. 그러나 양쪽 다 악화 가능성 있어 방어 자산 필수.")
+    elif low_inf and high_rec:
+        # 디스인플레 + 침체 임박 = 가장 명확한 인하 환경
+        hike = ("🔴 침체 확정 + 디플레",
+                "물가 낮은데 추가 긴축 = 2008년 이전 일본형 장기 침체. 절대 피해야 할 선택.")
+        cut = ("🟢 가장 합리적 선택",
+               "Fed 적극 완화로 경기 회복 시도. 2009·2020년 패턴. 6~12개월 후 강한 반등 종종 발생.")
+        hold = ("🟠 침체 심화 위험",
+                "Fed 늦으면 침체 깊어짐. 시장은 인하 기대로 일시 반등할 수 있으나 실제 인하 없으면 실망.")
+    elif low_inf and not high_rec:
+        # 골디락스
+        hike = ("🟠 호재 종료",
+                "잘 가고 있는데 굳이 긴축 = 시장 실망. 2018년 4분기 패턴. 일시 조정 후 회복.")
+        cut = ("🟢 보험성 인하 (Goldilocks 강화)",
+               "1995·2019년 패턴. 미리 완화로 침체 예방. 위험자산 강세 장기화 가능.")
+        hold = ("🟢 현재 환경 유지",
+                "특별한 액션 없이도 좋은 환경. 시장 안정적 상승 지속 가능.")
+    else:
+        # 중립 구간
+        hike = ("🟠 시장 부담",
+                "물가 잡혀가는데 추가 긴축은 과잉. 시장 단기 조정 가능.")
+        cut = ("🟡 시기상조 가능",
+               "확실한 디스인플레/침체 신호 없이 인하시 부작용 우려.")
+        hold = ("🟢 안정적",
+                "현재 데이터로는 정책 유지가 합리적.")
+
+    return {"hike": hike, "cut": cut, "hold": hold}
+
+
 def combined_diagnosis(market_score, inf_score, rec_score):
     """시장 상황 + 인플레 + 침체 조합 → 과거 사례 기반 진단"""
     # 시장 강도
@@ -2841,7 +2894,7 @@ try:
 
     # ===== 시장 × 인플레 × 침체 조합 진단 =====
     combo_name, combo_desc, combo_cls = combined_diagnosis(mkt["score"], eco["inf_score"], eco["rec_score"])
-    st.markdown(f"""<div class='card' style='margin-top:18px; padding:22px 26px; border-left:6px solid {"#ef4444" if combo_cls == "neg" else "#f59e0b" if combo_cls == "warn" else "#22c55e"}; background:linear-gradient(135deg, rgba(59,130,246,0.04), transparent);'>
+    st.markdown(f"""<div class='card' style='margin-top:18px; padding:22px 26px; border-left:6px solid {"#ef4444" if combo_cls == "neg" else "#f59e0b" if combo_cls == "warn" else "#22c55e"};'>
     <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;'>
     <span style='font-size:13px; color:#94a3b8; font-weight:700; letter-spacing:1px;'>🎯 시장 × 인플레 × 침체 조합 진단</span>
     <div style='font-size:12px; color:#64748b;'>시장 {mkt["score"]:.0f} · 인플레 {eco["inf_score"]:.0f} · 침체 {eco["rec_score"]:.0f}</div>
@@ -2849,6 +2902,30 @@ try:
     <div class='{combo_cls}' style='font-size:22px; font-weight:900; margin-bottom:10px;'>{combo_name}</div>
     <div style='color:#cbd5e1; font-size:13px; line-height:1.7;'>📜 {combo_desc}</div>
     </div>""", unsafe_allow_html=True)
+
+    # ===== Fed 금리 시나리오 =====
+    fed = fed_scenarios(mkt["score"], eco["inf_score"], eco["rec_score"])
+    st.markdown("<div class='section-h' style='margin-top:20px;'>🏛️ Fed 금리 시나리오 별 결과 <span style='color:#6b7280; font-weight:400; font-size:11px; margin-left:8px;'>· 현재 환경 기반 예상</span></div>", unsafe_allow_html=True)
+
+    fc1, fc2, fc3 = st.columns(3)
+    def fed_card(title, icon, scenario, accent):
+        label, desc = scenario
+        # 상황 클래스 (제목 색)
+        if "🟢" in label: bcolor = "#15803d"; lcls = "pos"
+        elif "🔴" in label: bcolor = "#991b1b"; lcls = "neg"
+        else: bcolor = "#a16207"; lcls = "warn"
+        return f"""<div class='card' style='padding:18px 22px; border-top:3px solid {bcolor}; height:100%;'>
+        <div style='display:flex; align-items:center; gap:8px; margin-bottom:10px;'>
+        <span style='font-size:18px;'>{icon}</span>
+        <span style='font-size:13px; color:#9ca3af; font-weight:700; letter-spacing:0.05em;'>{title}</span>
+        </div>
+        <div class='{lcls}' style='font-size:15px; font-weight:800; margin-bottom:10px; line-height:1.3;'>{label}</div>
+        <div style='color:#cbd5e1; font-size:12px; line-height:1.6;'>{desc}</div>
+        </div>"""
+
+    with fc1: st.markdown(fed_card("금리 인상", "📈", fed["hike"], "neg"), unsafe_allow_html=True)
+    with fc2: st.markdown(fed_card("금리 동결", "⏸️", fed["hold"], "warn"), unsafe_allow_html=True)
+    with fc3: st.markdown(fed_card("금리 인하", "📉", fed["cut"], "pos"), unsafe_allow_html=True)
 
 except Exception as e:
     st.error(f"오류: {e}")
