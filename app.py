@@ -846,63 +846,48 @@ def smooth_series(series, window=5):
     return series.rolling(window, min_periods=1, center=True).mean()
 
 
-# ============ 테마별 자금흐름 ============
-THEMES = {
-    "🏛️ M7 (빅테크)": {
-        "tickers": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"],
-        "desc": "글로벌 시총 상위 빅테크 7개"
-    },
-    "🤖 AI 인프라": {
-        "tickers": ["NVDA", "AMD", "TSM", "ASML", "AVGO", "SMCI", "ARM"],
-        "desc": "AI 칩·반도체·서버"
-    },
-    "⚡ AI 전력 (SMR/원전)": {
-        "tickers": ["VST", "CEG", "SMR", "NNE", "OKLO", "BWXT", "TLN"],
-        "desc": "AI 데이터센터 전력 공급"
-    },
-    "💰 핀테크/크립토": {
-        "tickers": ["COIN", "MSTR", "PYPL", "HOOD", "MARA", "RIOT", "SQ"],
-        "desc": "디지털 금융·암호화폐"
-    },
-    "🛢️ 에너지/원자재": {
-        "tickers": ["XOM", "CVX", "OXY", "COP", "EOG", "SLB", "MPC"],
-        "desc": "원유·천연가스·정유"
-    },
-    "🌏 신흥국 ETF": {
-        "tickers": ["EWY", "EWJ", "MCHI", "INDA", "EWZ", "VNM", "EEM"],
-        "desc": "한국·일본·중국·인도·브라질·베트남"
-    },
+# ============ 섹터 ETF (S&P500 11개 GICS + 추가 4개) ============
+SECTOR_ETFS = {
+    "에너지": "XLE",
+    "필수소비재": "XLP",
+    "금융": "XLF",
+    "부동산/리츠": "XLRE",
+    "통신서비스": "XLC",
+    "헬스케어": "XLV",
+    "유틸리티": "XLU",
+    "소재": "XLB",
+    "임의소비재": "XLY",
+    "산업재": "XLI",
+    "기술": "XLK",
+    # 추가 테마
+    "우주항공/방산": "ITA",
+    "반도체": "SMH",
+    "원자력/SMR": "NLR",
+    "신흥국": "EEM",
 }
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def get_theme_flow():
-    """테마별 종목 1주/1개월 수익률"""
-    result = {}
-    for theme, info in THEMES.items():
-        items = []
-        for tk in info["tickers"]:
-            try:
-                h = yf.Ticker(tk).history(period="3mo")
-                if len(h) < 21: continue
-                curr = float(h['Close'].iloc[-1])
-                w_ago = float(h['Close'].iloc[-5]) if len(h) >= 5 else curr
-                m_ago = float(h['Close'].iloc[-21]) if len(h) >= 21 else curr
-                week_chg = (curr - w_ago) / w_ago * 100
-                month_chg = (curr - m_ago) / m_ago * 100
-                items.append({
-                    "ticker": tk, "price": curr,
-                    "week": week_chg, "month": month_chg
-                })
-            except Exception:
-                continue
-        if items:
-            avg_week = float(np.mean([i['week'] for i in items]))
-            avg_month = float(np.mean([i['month'] for i in items]))
-            result[theme] = {
-                "items": items, "desc": info["desc"],
-                "avg_week": avg_week, "avg_month": avg_month
-            }
+def get_sector_flow():
+    """15개 섹터 ETF 1개월 등락률"""
+    result = []
+    for name, tk in SECTOR_ETFS.items():
+        try:
+            h = yf.Ticker(tk).history(period="3mo")
+            if len(h) < 21: continue
+            curr = float(h['Close'].iloc[-1])
+            m_ago = float(h['Close'].iloc[-21])
+            w_ago = float(h['Close'].iloc[-5]) if len(h) >= 5 else curr
+            month_chg = (curr - m_ago) / m_ago * 100
+            week_chg = (curr - w_ago) / w_ago * 100
+            result.append({
+                "name": name, "ticker": tk,
+                "month": month_chg, "week": week_chg
+            })
+        except Exception:
+            continue
+    # 1개월 등락률 높은 순
+    result.sort(key=lambda x: x["month"], reverse=True)
     return result
 
 
@@ -2054,77 +2039,57 @@ try:
     </div>
     </div>""", unsafe_allow_html=True)
 
-    # ===== 테마별 자금흐름 (Sector Rotation) =====
-    st.markdown("<div class='section-h'>💸 테마별 자금흐름 <span style='color:#6b7280; font-weight:400; font-size:11px; margin-left:8px;'>· 어느 섹터로 돈이 들어오나</span></div>", unsafe_allow_html=True)
+    # ===== 섹터별 자금 흐름 =====
+    st.markdown("<div class='section-h'>💸 섹터별 자금 흐름 <span style='color:#6b7280; font-weight:400; font-size:11px; margin-left:8px;'>· 1개월 등락률 · 15개 섹터 ETF</span></div>", unsafe_allow_html=True)
 
-    with st.spinner("테마 분석 중..."):
-        themes = get_theme_flow()
+    with st.spinner("섹터 분석 중..."):
+        sectors = get_sector_flow()
 
-    if themes:
-        # 테마 카드를 2열 그리드로
-        theme_list = list(themes.items())
-        for row_start in range(0, len(theme_list), 2):
-            cols = st.columns(2)
-            for col_idx, (theme_name, t_data) in enumerate(theme_list[row_start:row_start+2]):
-                with cols[col_idx]:
-                    avg_w = t_data["avg_week"]
-                    avg_m = t_data["avg_month"]
-                    w_cls = "pos" if avg_w > 0 else "neg"
-                    m_cls = "pos" if avg_m > 0 else "neg"
-                    # 자금 강도 (월간 기준)
-                    if avg_m > 5:
-                        flow_label = "🔥 강한 유입"; flow_color = "#4ade80"
-                    elif avg_m > 2:
-                        flow_label = "📈 유입"; flow_color = "#4ade80"
-                    elif avg_m > -2:
-                        flow_label = "⚪ 중립"; flow_color = "#9ca3af"
-                    elif avg_m > -5:
-                        flow_label = "📉 유출"; flow_color = "#f87171"
-                    else:
-                        flow_label = "❄️ 강한 유출"; flow_color = "#f87171"
+    if sectors:
+        # 가로 막대 차트
+        names = [s["name"] for s in sectors]
+        values = [s["month"] for s in sectors]
+        colors = ["#4ade80" if v > 0 else "#f87171" for v in values]
 
-                    # 개별 종목 미니 리스트
-                    items_html = ""
-                    sorted_items = sorted(t_data["items"], key=lambda x: x["month"], reverse=True)
-                    for it in sorted_items:
-                        i_cls = "pos" if it["month"] > 0 else "neg"
-                        items_html += f"""<div style='display:flex; justify-content:space-between; padding:5px 0; font-size:12px; border-bottom:1px solid #14171c;'>
-                        <span style='color:#d1d5db; font-family:JetBrains Mono, monospace; font-weight:600;'>{it["ticker"]}</span>
-                        <span class='{i_cls}' style='font-family:JetBrains Mono, monospace; font-weight:600;'>{it["month"]:+.1f}%</span>
-                        </div>"""
+        fig_sec = go.Figure(go.Bar(
+            x=values, y=names, orientation='h',
+            marker=dict(color=colors, line=dict(width=0)),
+            text=[f"{v:+.2f}%" for v in values],
+            textposition='outside',
+            textfont=dict(family='JetBrains Mono', size=11, color='#d1d5db'),
+            hovertemplate='<b>%{y}</b><br>%{x:.2f}%<extra></extra>'
+        ))
+        fig_sec.update_layout(
+            height=480,
+            margin=dict(l=10, r=60, t=10, b=20),
+            plot_bgcolor='#08090d', paper_bgcolor='#08090d',
+            font=dict(family="Inter", color='#d1d5db', size=11),
+            xaxis=dict(
+                showgrid=True, gridcolor='#1c1f26', zeroline=True,
+                zerolinecolor='#374151', zerolinewidth=1,
+                ticksuffix='%', tickfont=dict(family='JetBrains Mono')
+            ),
+            yaxis=dict(showgrid=False, autorange='reversed',
+                       tickfont=dict(size=12, color='#fafafa')),
+            showlegend=False
+        )
+        st.plotly_chart(fig_sec, use_container_width=True)
 
-                    st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid {flow_color}; margin-bottom:16px;'>
-                    <div style='display:flex; justify-content:space-between; align-items:start; margin-bottom:8px;'>
-                    <div>
-                    <div style='font-size:14px; font-weight:700; color:#fafafa;'>{theme_name}</div>
-                    <div style='font-size:11px; color:#6b7280; margin-top:2px;'>{t_data["desc"]}</div>
-                    </div>
-                    <div style='text-align:right;'>
-                    <div style='font-size:11px; color:{flow_color}; font-weight:600;'>{flow_label}</div>
-                    </div>
-                    </div>
-                    <div style='display:flex; gap:16px; padding:10px 0; border-bottom:1px solid #1c1f26; margin-bottom:6px;'>
-                    <div style='flex:1;'>
-                    <div style='font-size:10px; color:#6b7280; letter-spacing:0.05em;'>1주 평균</div>
-                    <div class='{w_cls}' style='font-size:18px; font-weight:700; font-family:JetBrains Mono, monospace;'>{avg_w:+.2f}%</div>
-                    </div>
-                    <div style='flex:1;'>
-                    <div style='font-size:10px; color:#6b7280; letter-spacing:0.05em;'>1개월 평균</div>
-                    <div class='{m_cls}' style='font-size:18px; font-weight:700; font-family:JetBrains Mono, monospace;'>{avg_m:+.2f}%</div>
-                    </div>
-                    </div>
-                    {items_html}
-                    </div>""", unsafe_allow_html=True)
-
-        # 테마 랭킹 한줄 요약
-        sorted_themes = sorted(themes.items(), key=lambda x: x[1]["avg_month"], reverse=True)
-        winner = sorted_themes[0]
-        loser = sorted_themes[-1]
-        st.markdown(f"""<div class='card' style='padding:14px 18px; margin-top:8px;'>
-        <span style='color:#6b7280; font-size:12px;'>📊 1개월 자금흐름 종합 · </span>
-        <span class='pos' style='font-weight:700;'>최대 유입: {winner[0]} ({winner[1]["avg_month"]:+.2f}%)</span>
-        <span style='color:#6b7280; margin:0 8px;'>·</span>
-        <span class='neg' style='font-weight:700;'>최대 유출: {loser[0]} ({loser[1]["avg_month"]:+.2f}%)</span>
+        # 요약
+        inflow = [s for s in sectors if s["month"] > 0]
+        outflow = [s for s in sectors if s["month"] <= 0]
+        winner = sectors[0]
+        loser = sectors[-1]
+        st.markdown(f"""<div class='card' style='padding:14px 18px; margin-top:6px;'>
+        <span class='pos' style='font-weight:700; font-size:13px;'>유입 우세 {len(inflow)}↑</span>
+        <span style='color:#6b7280; margin:0 6px;'>·</span>
+        <span class='neg' style='font-weight:700; font-size:13px;'>유출 {len(outflow)}↓</span>
+        <span style='color:#6b7280; margin:0 10px;'>—</span>
+        <span style='color:#9ca3af; font-size:12px;'>최강</span>
+        <span class='pos' style='font-weight:700; margin-left:4px;'>{winner["name"]} {winner["month"]:+.2f}%</span>
+        <span style='color:#6b7280; margin:0 6px;'>·</span>
+        <span style='color:#9ca3af; font-size:12px;'>최약</span>
+        <span class='neg' style='font-weight:700; margin-left:4px;'>{loser["name"]} {loser["month"]:+.2f}%</span>
         </div>""", unsafe_allow_html=True)
 
     st.markdown("---")
@@ -2239,6 +2204,85 @@ try:
         hovermode='x unified'
     )
     st.plotly_chart(fig, use_container_width=True)
+
+    # ===== 벤치마크 대비 상대 수익률 =====
+    @st.cache_data(ttl=600, show_spinner=False)
+    def get_benchmark(period="1y"):
+        try:
+            spy = yf.Ticker("SPY").history(period=period)
+            qqq = yf.Ticker("QQQ").history(period=period)
+            return spy, qqq
+        except Exception:
+            return None, None
+
+    spy_h, qqq_h = get_benchmark("1y")
+    if spy_h is not None and not spy_h.empty:
+        # 1년치 종목 데이터 + SPY + QQQ를 0% 기준으로 정규화
+        stock_1y = hist.iloc[-252:] if len(hist) >= 252 else hist
+        spy_aligned = spy_h.iloc[-252:] if len(spy_h) >= 252 else spy_h
+        qqq_aligned = qqq_h.iloc[-252:] if len(qqq_h) >= 252 else qqq_h
+
+        # 정규화 (시작점 0%)
+        stock_norm = (stock_1y['Close'] / stock_1y['Close'].iloc[0] - 1) * 100
+        spy_norm = (spy_aligned['Close'] / spy_aligned['Close'].iloc[0] - 1) * 100
+        qqq_norm = (qqq_aligned['Close'] / qqq_aligned['Close'].iloc[0] - 1) * 100
+
+        # 종목 vs 벤치마크 비교
+        stock_perf = float(stock_norm.iloc[-1])
+        spy_perf = float(spy_norm.iloc[-1])
+        qqq_perf = float(qqq_norm.iloc[-1])
+        vs_spy = stock_perf - spy_perf
+        vs_qqq = stock_perf - qqq_perf
+
+        st.markdown("<div class='section-h'>📊 벤치마크 대비 상대 수익률 <span style='color:#6b7280; font-weight:400; font-size:11px; margin-left:8px;'>· 1년 기준 · S&P500 (SPY) + 나스닥 (QQQ)</span></div>", unsafe_allow_html=True)
+
+        bench_fig = go.Figure()
+        bench_fig.add_trace(go.Scatter(x=stock_1y.index, y=stock_norm,
+                                        mode='lines', name=ticker,
+                                        line=dict(color='#fafafa', width=2.5)))
+        bench_fig.add_trace(go.Scatter(x=spy_aligned.index, y=spy_norm,
+                                        mode='lines', name='S&P500',
+                                        line=dict(color='#60a5fa', width=1.5, dash='dot')))
+        bench_fig.add_trace(go.Scatter(x=qqq_aligned.index, y=qqq_norm,
+                                        mode='lines', name='나스닥',
+                                        line=dict(color='#a78bfa', width=1.5, dash='dot')))
+        bench_fig.add_hline(y=0, line=dict(color='#374151', width=1, dash='solid'))
+        bench_fig.update_layout(
+            height=340, margin=dict(l=10, r=10, t=10, b=10),
+            plot_bgcolor='#08090d', paper_bgcolor='#08090d',
+            font=dict(family="Inter", color='#d1d5db', size=11),
+            xaxis=dict(gridcolor='#1c1f26', showgrid=True, zeroline=False),
+            yaxis=dict(gridcolor='#1c1f26', showgrid=True, zeroline=False,
+                       ticksuffix='%', tickfont=dict(family='JetBrains Mono')),
+            legend=dict(orientation="h", y=1.06, x=0, bgcolor='rgba(0,0,0,0)'),
+            hovermode='x unified'
+        )
+        st.plotly_chart(bench_fig, use_container_width=True)
+
+        # 비교 카드
+        spy_cls = "pos" if vs_spy > 0 else "neg"
+        qqq_cls = "pos" if vs_qqq > 0 else "neg"
+        spy_label = "아웃퍼폼" if vs_spy > 0 else "언더퍼폼"
+        qqq_label = "아웃퍼폼" if vs_qqq > 0 else "언더퍼폼"
+        bc1, bc2, bc3 = st.columns(3)
+        with bc1:
+            stock_cls = "pos" if stock_perf > 0 else "neg"
+            st.markdown(f"""<div class='card' style='padding:16px 20px;'>
+            <div class='card-title'>{ticker} 1년 수익률</div>
+            <div class='card-value {stock_cls}'>{stock_perf:+.2f}%</div>
+            </div>""", unsafe_allow_html=True)
+        with bc2:
+            st.markdown(f"""<div class='card' style='padding:16px 20px;'>
+            <div class='card-title'>vs S&P500</div>
+            <div class='card-value {spy_cls}'>{vs_spy:+.2f}%p</div>
+            <div class='card-sub {spy_cls}'>{spy_label} · SPY {spy_perf:+.2f}%</div>
+            </div>""", unsafe_allow_html=True)
+        with bc3:
+            st.markdown(f"""<div class='card' style='padding:16px 20px;'>
+            <div class='card-title'>vs 나스닥</div>
+            <div class='card-value {qqq_cls}'>{vs_qqq:+.2f}%p</div>
+            <div class='card-sub {qqq_cls}'>{qqq_label} · QQQ {qqq_perf:+.2f}%</div>
+            </div>""", unsafe_allow_html=True)
 
     # ===== 목표가 계산식 =====
     st.markdown("<div class='section-h'>💰 AI 목표가 계산식</div>", unsafe_allow_html=True)
