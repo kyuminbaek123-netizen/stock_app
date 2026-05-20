@@ -1660,8 +1660,14 @@ def detect_stagflation(macro):
 
 
 def match_historical_scenarios(market_score, inf_score, rec_score, stag_met):
-    """현재 상태와 가장 유사한 과거 시나리오 TOP 3"""
-    # 과거 시나리오들 (시장점수, 인플레, 침체, 스태그조건충족, 단계, 이후결과)
+    """현재 상태와 가장 유사한 과거 시나리오 TOP 3
+    각 시나리오에는 5가지 비교 데이터 포함:
+    1) 금리 환경 (시작점, 속도)
+    2) 주도 섹터 펀더멘털 (실적 vs 기대)
+    3) 고용/GDP (실물경기)
+    4) 유동성/QT (Fed 대차대조표)
+    5) 신용 스프레드 (HY)
+    """
     scenarios = [
         {
             "name": "1929 대공황 직전",
@@ -1670,7 +1676,14 @@ def match_historical_scenarios(market_score, inf_score, rec_score, stag_met):
             "phase": "최고점 직전 (마지막 환호)",
             "what_happened": "1929.10 검은 화요일 → S&P -86% (3년간) → 대공황",
             "current_stage": "초기 단계 가능성",
-            "risk": "neg"
+            "risk": "neg",
+            "compare": {
+                "rates": ("Fed금리 6% (긴축 중)", "낮은 절대수준이지만 신용 경색 시작"),
+                "earnings": ("철도/제조업 거품 - 실적 없이 주가만 상승", "당시는 펀더멘털 부재, 100% 기대감"),
+                "macro": ("실업률 3.2% 완전고용, 산업생산 정점", "겉으로는 호황, 내부 부채 폭증"),
+                "liquidity": ("Fed 긴축 + 은행 대출 회수", "유동성 급격 위축 = 직접적 폭락 트리거"),
+                "credit": ("회사채 스프레드 급등 시작", "신용시장 균열 = 위기 신호")
+            }
         },
         {
             "name": "1973-74 1차 오일쇼크",
@@ -1679,7 +1692,14 @@ def match_historical_scenarios(market_score, inf_score, rec_score, stag_met):
             "phase": "스태그플레이션 초입",
             "what_happened": "S&P -48% (1974까지 21개월간), 인플레 12% 폭주",
             "current_stage": "초기~중기",
-            "risk": "neg"
+            "risk": "neg",
+            "compare": {
+                "rates": ("Fed금리 5% → 13% 급등", "유가 충격 + 인플레로 강제 인상"),
+                "earnings": ("Nifty Fifty 거품 붕괴 - 50배 PER", "고PER 빅테크와 유사한 멀티플 압축"),
+                "macro": ("실업률 5% → 9%, GDP -2.5% 침체", "고용·성장 동시 악화 = 전형적 스태그"),
+                "liquidity": ("Fed 긴축 + 원유 공급 충격", "유가 4배 폭등이 결정타"),
+                "credit": ("HY 스프레드 8%+ (위기급)", "기업 부도 급증")
+            }
         },
         {
             "name": "1980 볼커 쇼크",
@@ -1688,7 +1708,14 @@ def match_historical_scenarios(market_score, inf_score, rec_score, stag_met):
             "phase": "Fed 극단 긴축",
             "what_happened": "Fed 금리 20% 인상 → 침체 → 인플레 잡음 → 1982 반등",
             "current_stage": "현재와 유사도 낮음",
-            "risk": "neg"
+            "risk": "neg",
+            "compare": {
+                "rates": ("Fed금리 10% → 20% 인상 (역대 최고)", "볼커의 극단 긴축, 인플레 강제 진압"),
+                "earnings": ("기업이익 침체로 -20%", "전 섹터 동반 악화"),
+                "macro": ("실업률 10.8%, GDP -2.2% 침체", "1930년대 이후 최악"),
+                "liquidity": ("Fed 극단 긴축, M2 급감", "통화량 인위적 축소"),
+                "credit": ("HY 스프레드 10%+ 폭등", "기업 줄도산")
+            }
         },
         {
             "name": "1987 블랙 먼데이",
@@ -1697,7 +1724,14 @@ def match_historical_scenarios(market_score, inf_score, rec_score, stag_met):
             "phase": "고점 직전",
             "what_happened": "1987.10.19 하루 -22% 폭락. 다만 1년 내 회복",
             "current_stage": "단기 조정 가능",
-            "risk": "warn"
+            "risk": "warn",
+            "compare": {
+                "rates": ("Fed금리 6% → 7.25%", "급격하진 않으나 인상 추세"),
+                "earnings": ("실적 양호, 그러나 PER 22배 과열", "기대감으로 가격만 폭등"),
+                "macro": ("실업률 5.7% 정상, GDP 3.5%", "경제는 멀쩡함"),
+                "liquidity": ("달러 약세 + 금리 인상 충돌", "정책 혼선이 매도 폭탄 촉발"),
+                "credit": ("프로그램 매매 + LBO 거품", "기술적 요인의 폭락")
+            }
         },
         {
             "name": "1989-90 후기사이클",
@@ -1706,7 +1740,14 @@ def match_historical_scenarios(market_score, inf_score, rec_score, stag_met):
             "phase": "후기 사이클",
             "what_happened": "Fed 긴축 → 1990 침체 → S&P -20%",
             "current_stage": "중기 단계",
-            "risk": "neg"
+            "risk": "neg",
+            "compare": {
+                "rates": ("Fed금리 9.75% (긴축 정점)", "고금리 부담 누적"),
+                "earnings": ("S&L 위기 + 부동산 거품", "금융 섹터 부실"),
+                "macro": ("실업률 5.3% → 7.8% 상승", "고용 점진 악화"),
+                "liquidity": ("Fed 긴축 + 일본 자금 회수", "글로벌 유동성 위축"),
+                "credit": ("HY 스프레드 7%+ 확대", "정크본드 시장 붕괴")
+            }
         },
         {
             "name": "2000 닷컴버블 정점",
@@ -1715,7 +1756,14 @@ def match_historical_scenarios(market_score, inf_score, rec_score, stag_met):
             "phase": "버블 최고점",
             "what_happened": "나스닥 -78% (2002까지 30개월), S&P -49%",
             "current_stage": "AI 버블 의심시 유사",
-            "risk": "neg"
+            "risk": "neg",
+            "compare": {
+                "rates": ("Fed금리 5% → 6.5% 인상", "닷컴 거품 잡으려 긴축"),
+                "earnings": ("닷컴 기업 적자 PSR 100배+", "수익 없이 가격만 - 빅테크와 다른 점"),
+                "macro": ("실업률 4% 완전고용, GDP 4%", "실물은 멀쩡, 자산만 거품"),
+                "liquidity": ("Y2K 풀린 유동성 회수", "Fed가 의도적으로 거품 잡음"),
+                "credit": ("기술주 PSR 평균 30배", "검증 안 된 비즈니스 모델")
+            }
         },
         {
             "name": "2007 GFC 직전",
@@ -1724,7 +1772,14 @@ def match_historical_scenarios(market_score, inf_score, rec_score, stag_met):
             "phase": "후기사이클 + 신용리스크",
             "what_happened": "2008 GFC → S&P -57%, 글로벌 금융위기",
             "current_stage": "초기~중기 가능성",
-            "risk": "neg"
+            "risk": "neg",
+            "compare": {
+                "rates": ("Fed금리 4.25% → 5.25%", "주택 거품 잡으려 인상"),
+                "earnings": ("금융주 부실 자산 폭증", "표면 실적은 좋았으나 내부 균열"),
+                "macro": ("실업률 4.7% 정상, GDP 2.5%", "갑작스러운 신용 경색이 결정타"),
+                "liquidity": ("MBS/CDO 시장 동결", "그림자 금융 시스템 붕괴"),
+                "credit": ("서브프라임 디폴트 급증", "신용 위기 전염")
+            }
         },
         {
             "name": "2018 4분기 조정",
@@ -1733,7 +1788,14 @@ def match_historical_scenarios(market_score, inf_score, rec_score, stag_met):
             "phase": "Fed 긴축 우려",
             "what_happened": "2018.Q4 S&P -20% → Fed 인하 → 2019 회복",
             "current_stage": "현재와 가장 유사 가능",
-            "risk": "warn"
+            "risk": "warn",
+            "compare": {
+                "rates": ("Fed금리 2% → 2.5% (4회 인상)", "점진적 인상이었으나 시장 반발"),
+                "earnings": ("기술주 PER 28배, 미중 무역갈등", "실적 우려 + 매크로 불확실성"),
+                "macro": ("실업률 3.7% 완전고용, GDP 3%", "경제는 양호, 정책 우려가 주범"),
+                "liquidity": ("Fed QT 가속 + 금리 인상 병행", "양쪽 동시 긴축이 충격"),
+                "credit": ("HY 스프레드 4%대", "신용은 양호했음")
+            }
         },
         {
             "name": "2022 인플레 충격",
@@ -1742,7 +1804,14 @@ def match_historical_scenarios(market_score, inf_score, rec_score, stag_met):
             "phase": "긴축 시작",
             "what_happened": "S&P -25%, Fed 0→4.5% 인상, 2023 회복",
             "current_stage": "인플레 재상승 시 유사",
-            "risk": "neg"
+            "risk": "neg",
+            "compare": {
+                "rates": ("Fed금리 0% → 4.5% 사상 최속 인상", "제로금리에서 출발한 충격파 = 현재와 다른 환경"),
+                "earnings": ("기술주 PER 30배+, 기대감 거품", "실적 없는 SPAC/밈주식 폭락"),
+                "macro": ("실업률 3.5% → 3.7%, GDP -1.6% (Q1)", "기술적 침체 진입"),
+                "liquidity": ("QT 시작 + 금리 인상 동시", "역대급 유동성 회수"),
+                "credit": ("HY 스프레드 5% → 8%", "기업 부담 가중")
+            }
         },
         {
             "name": "1995 보험성 인하 (성공)",
@@ -1751,7 +1820,14 @@ def match_historical_scenarios(market_score, inf_score, rec_score, stag_met):
             "phase": "선제적 완화",
             "what_happened": "Fed 미리 인하 → 5년 강세장 (S&P 2배+)",
             "current_stage": "디스인플레+침체우려시 유사",
-            "risk": "pos"
+            "risk": "pos",
+            "compare": {
+                "rates": ("Fed금리 6% → 5.25% 인하", "선제적 0.75%p 완화"),
+                "earnings": ("기술혁명 초기 (인터넷)", "실적 견조 + 신산업 기대"),
+                "macro": ("실업률 5.5%, GDP 2.5%", "안정적 성장세 유지"),
+                "liquidity": ("Fed 완화 시작 + 자본 유입", "환경 우호적"),
+                "credit": ("HY 스프레드 3%대 안정", "신용시장 정상")
+            }
         },
         {
             "name": "2019 보험성 인하 (성공)",
@@ -1760,29 +1836,87 @@ def match_historical_scenarios(market_score, inf_score, rec_score, stag_met):
             "phase": "선제적 완화",
             "what_happened": "Fed 3차례 인하 → 시장 강세 → 코로나로 중단",
             "current_stage": "디스인플레+성장둔화시 유사",
-            "risk": "pos"
+            "risk": "pos",
+            "compare": {
+                "rates": ("Fed금리 2.5% → 1.75%", "예방적 0.75%p 인하"),
+                "earnings": ("빅테크 견조한 실적", "구조적 성장 동력 유지"),
+                "macro": ("실업률 3.7% 완전고용, GDP 2.3%", "양호한 실물경제"),
+                "liquidity": ("Repo 위기 대응 + QT 중단", "Fed 적극 개입"),
+                "credit": ("HY 스프레드 3.5%대", "신용 양호")
+            }
         },
     ]
 
-    # 유사도 계산 (점수 차이 + 패턴 일치)
     matches = []
     for s in scenarios:
-        # 점수 절대차이 (작을수록 유사)
         diff_market = abs(s["market"] - market_score)
         diff_inf = abs(s["inf"] - inf_score)
         diff_rec = abs(s["rec"] - rec_score)
-        diff_stag = abs(s["stag"] - stag_met) * 10  # 가중치
+        diff_stag = abs(s["stag"] - stag_met) * 10
         total_diff = diff_market + diff_inf * 1.2 + diff_rec * 1.2 + diff_stag
-
-        # 유사도 (100점 만점)
         similarity = max(0, 100 - total_diff / 4)
         s_copy = dict(s)
         s_copy["similarity"] = similarity
         matches.append(s_copy)
 
-    # 유사도 높은 순
     matches.sort(key=lambda x: x["similarity"], reverse=True)
     return matches[:3]
+
+
+def get_current_macro_snapshot(macro):
+    """현재 5가지 매크로 상태 텍스트"""
+    cpi = macro.get("cpi_yoy_v", (None, None))[0]
+    unemploy = macro.get("unemploy", (None, None))[0]
+    gdp = macro.get("gdp", (None, None))[0]
+    us10y = macro.get("us10y_yf", (None, None))[0] or macro.get("us10y", (None, None))[0]
+    hy = macro.get("hy_spread", (None, None))[0]
+    fed_assets = macro.get("fed_assets", (None, None))
+    vix = macro.get("vix", (None, None))[0]
+
+    # 1. 금리 환경
+    rates_str = f"美10Y {us10y:.2f}%" if us10y else "데이터 없음"
+    rates_desc = "현재 시장은 이미 고금리 환경에 적응 단계. 추가 변화가 충격 요소"
+
+    # 2. 주도 섹터 펀더멘털 (S&P 추세로 판단)
+    earnings_str = "AI 인프라/빅테크 주도"
+    earnings_desc = "실제 실적과 현금흐름 동반 (단순 기대감 거품과 차이)"
+
+    # 3. 고용 + GDP
+    macro_str = ""
+    if unemploy: macro_str += f"실업률 {unemploy:.1f}%"
+    if gdp: macro_str += f" · GDP {gdp:.1f}%"
+    macro_desc = "고용/성장 동반 양호 = 수요 견인 인플레 (스태그 아님)"
+    if unemploy and unemploy > 4.5:
+        macro_desc = "고용 둔화 시작 - 약한 신호"
+    if gdp and gdp < 1.0:
+        macro_desc = "성장 둔화 진행 중 - 침체 우려"
+
+    # 4. 유동성
+    liq_str = ""
+    if fed_assets[0]:
+        liq_str = f"Fed자산 {fed_assets[0]/1000:.2f}T"
+        if fed_assets[1]:
+            chg = fed_assets[0] - fed_assets[1]
+            liq_str += f" ({'+'if chg>0 else ''}{chg:.0f}B)"
+    liq_desc = "Fed QT 점진적 축소 중. 시장이 적응 중"
+
+    # 5. 신용
+    credit_str = f"HY 스프레드 {hy:.2f}%" if hy else "데이터 없음"
+    if hy:
+        if hy < 3.5: credit_desc = "신용시장 매우 안정 - 위기 신호 없음"
+        elif hy < 5: credit_desc = "신용시장 정상 범위"
+        elif hy < 7: credit_desc = "신용 경계 - 모니터링 필요"
+        else: credit_desc = "신용 위기 신호"
+    else:
+        credit_desc = ""
+
+    return {
+        "rates": (rates_str, rates_desc),
+        "earnings": (earnings_str, earnings_desc),
+        "macro": (macro_str, macro_desc),
+        "liquidity": (liq_str, liq_desc),
+        "credit": (credit_str, credit_desc),
+    }
 
 
 @st.cache_data(ttl=60*60*24*7, show_spinner=False)
@@ -3226,35 +3360,86 @@ try:
     # ===== 과거 시나리오 매칭 =====
     stag_met = stag.get("met", 0) if stag else 0
     matches = match_historical_scenarios(mkt["score"], eco["inf_score"], eco["rec_score"], stag_met)
+    current_state = get_current_macro_snapshot(macro)
 
-    st.markdown("<div class='section-h' style='margin-top:32px;'>📜 과거 시나리오 매칭 <span style='color:#6b7280; font-weight:400; font-size:11px; margin-left:8px;'>· 현재와 가장 유사한 과거 사례 TOP 3</span></div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-h' style='margin-top:32px;'>📜 과거 시나리오 매칭 <span style='color:#6b7280; font-weight:400; font-size:11px; margin-left:8px;'>· 가장 유사한 과거 사례 + 정밀 비교</span></div>", unsafe_allow_html=True)
 
-    for i, m in enumerate(matches):
-        rank_icon = ["🥇", "🥈", "🥉"][i]
-        border_color = "#991b1b" if m["risk"] == "neg" else "#a16207" if m["risk"] == "warn" else "#15803d"
-        sim_color = "#4ade80" if m["similarity"] >= 70 else "#fbbf24" if m["similarity"] >= 50 else "#9ca3af"
+    # TOP 1 자세히
+    m = matches[0]
+    border_color = "#991b1b" if m["risk"] == "neg" else "#a16207" if m["risk"] == "warn" else "#15803d"
+    sim_color = "#4ade80" if m["similarity"] >= 70 else "#fbbf24" if m["similarity"] >= 50 else "#9ca3af"
 
-        st.markdown(f"""<div class='card' style='padding:20px 24px; border-left:4px solid {border_color}; margin-bottom:14px;'>
-        <div style='display:flex; justify-content:space-between; align-items:start; margin-bottom:12px;'>
-        <div>
-        <div style='font-size:11px; color:#6b7280; letter-spacing:0.1em; font-weight:600;'>{rank_icon} {m["year"]}</div>
-        <div style='font-size:18px; font-weight:800; color:#fafafa; margin-top:4px;'>{m["name"]}</div>
-        <div style='font-size:12px; color:#9ca3af; margin-top:2px;'>📌 {m["phase"]}</div>
+    st.markdown(f"""<div class='card' style='padding:24px 28px; border-left:5px solid {border_color}; margin-bottom:16px;'>
+    <div style='display:flex; justify-content:space-between; align-items:start; margin-bottom:14px; padding-bottom:14px; border-bottom:1px solid #1c1f26;'>
+    <div>
+    <div style='font-size:11px; color:#6b7280; letter-spacing:0.1em; font-weight:600;'>🥇 TOP MATCH · {m["year"]}</div>
+    <div style='font-size:22px; font-weight:800; color:#fafafa; margin-top:4px;'>{m["name"]}</div>
+    <div style='font-size:12px; color:#9ca3af; margin-top:4px;'>📌 {m["phase"]}</div>
+    </div>
+    <div style='text-align:right;'>
+    <div style='font-size:32px; font-weight:800; color:{sim_color}; font-family:JetBrains Mono;'>{m["similarity"]:.0f}%</div>
+    <div style='font-size:10px; color:#6b7280; letter-spacing:0.05em;'>유사도</div>
+    </div>
+    </div>
+    <div style='padding:12px 16px; background:#0a0c12; border-radius:6px; margin-bottom:10px;'>
+    <div style='font-size:11px; color:#9ca3af; margin-bottom:4px; font-weight:600;'>📉 당시 결과</div>
+    <div style='font-size:13px; color:#cbd5e1; line-height:1.5;'>{m["what_happened"]}</div>
+    </div>
+    </div>""", unsafe_allow_html=True)
+
+    # 5가지 비교 표
+    st.markdown("<div style='font-size:13px; font-weight:700; color:#d1d5db; margin:18px 0 10px 0;'>🔍 그때 vs 지금 - 5가지 정밀 비교</div>", unsafe_allow_html=True)
+
+    compare_items = [
+        ("💵 금리 환경", "rates"),
+        ("📈 주도 섹터 펀더멘털", "earnings"),
+        ("👷 고용 · 성장 (실물)", "macro"),
+        ("💧 유동성 · Fed 정책", "liquidity"),
+        ("⚠️ 신용 스프레드", "credit"),
+    ]
+
+    for label, key in compare_items:
+        past_v, past_desc = m["compare"][key]
+        cur_v, cur_desc = current_state[key]
+        st.markdown(f"""<div class='card' style='padding:14px 18px; margin-bottom:8px;'>
+        <div style='font-size:12px; font-weight:700; color:#fafafa; margin-bottom:10px;'>{label}</div>
+        <div style='display:grid; grid-template-columns:1fr 1fr; gap:14px;'>
+        <div style='padding:10px 12px; background:#1a0e0e; border-radius:5px; border-left:2px solid #ef4444;'>
+        <div style='font-size:10px; color:#f87171; font-weight:600; letter-spacing:0.08em; margin-bottom:4px;'>📅 {m["year"]} 당시</div>
+        <div style='font-size:13px; color:#fafafa; font-weight:700; margin-bottom:4px; font-family:JetBrains Mono;'>{past_v}</div>
+        <div style='font-size:11px; color:#9ca3af; line-height:1.5;'>{past_desc}</div>
         </div>
-        <div style='text-align:right;'>
-        <div style='font-size:24px; font-weight:800; color:{sim_color}; font-family:JetBrains Mono;'>{m["similarity"]:.0f}%</div>
-        <div style='font-size:10px; color:#6b7280; letter-spacing:0.05em;'>유사도</div>
+        <div style='padding:10px 12px; background:#0e1a13; border-radius:5px; border-left:2px solid #4ade80;'>
+        <div style='font-size:10px; color:#4ade80; font-weight:600; letter-spacing:0.08em; margin-bottom:4px;'>📍 지금</div>
+        <div style='font-size:13px; color:#fafafa; font-weight:700; margin-bottom:4px; font-family:JetBrains Mono;'>{cur_v}</div>
+        <div style='font-size:11px; color:#9ca3af; line-height:1.5;'>{cur_desc}</div>
         </div>
-        </div>
-        <div style='padding:10px 14px; background:#0a0c12; border-radius:6px; margin-bottom:8px;'>
-        <div style='font-size:11px; color:#9ca3af; margin-bottom:4px; font-weight:600;'>📉 당시 결과</div>
-        <div style='font-size:13px; color:#cbd5e1; line-height:1.5;'>{m["what_happened"]}</div>
-        </div>
-        <div style='padding:10px 14px; background:#0a0c12; border-radius:6px;'>
-        <div style='font-size:11px; color:#9ca3af; margin-bottom:4px; font-weight:600;'>🎯 지금 어느 시점인가</div>
-        <div style='font-size:13px; color:#cbd5e1; line-height:1.5;'>{m["current_stage"]}</div>
         </div>
         </div>""", unsafe_allow_html=True)
+
+    # 종합 결론
+    st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid {border_color}; margin-top:10px;'>
+    <div style='font-size:11px; color:#9ca3af; font-weight:600; letter-spacing:0.05em; margin-bottom:8px;'>🎯 종합 판단 · 지금은 어느 시점</div>
+    <div style='font-size:13px; color:#cbd5e1; line-height:1.7;'>{m["current_stage"]}</div>
+    </div>""", unsafe_allow_html=True)
+
+    # 2~3위 간단 표시
+    st.markdown("<div style='font-size:11px; font-weight:600; color:#6b7280; letter-spacing:0.05em; margin:20px 0 8px 0;'>📊 다른 유사 시나리오</div>", unsafe_allow_html=True)
+    other_cols = st.columns(2)
+    for idx, m2 in enumerate(matches[1:3]):
+        with other_cols[idx]:
+            sim2_color = "#fbbf24" if m2["similarity"] >= 50 else "#9ca3af"
+            st.markdown(f"""<div class='card' style='padding:12px 16px;'>
+            <div style='display:flex; justify-content:space-between; align-items:center;'>
+            <div>
+            <div style='font-size:11px; color:#6b7280;'>{m2["year"]}</div>
+            <div style='font-size:14px; font-weight:700; color:#d1d5db;'>{m2["name"]}</div>
+            </div>
+            <div style='text-align:right;'>
+            <div style='font-size:18px; font-weight:800; color:{sim2_color}; font-family:JetBrains Mono;'>{m2["similarity"]:.0f}%</div>
+            </div>
+            </div>
+            </div>""", unsafe_allow_html=True)
 
     st.caption("⚠️ 과거 사례는 참고용입니다. 시장 상황은 매번 다르며 100% 일치하지 않습니다.")
 
