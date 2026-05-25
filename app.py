@@ -14,6 +14,28 @@ from plotly.subplots import make_subplots
 from scipy.signal import find_peaks
 from datetime import datetime, timedelta
 import requests
+import time as _time
+
+# yfinance 공용 세션 (User-Agent로 차단 완화)
+_YF_SESSION = requests.Session()
+_YF_SESSION.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+})
+
+
+def yf_history_safe(ticker, period="1y", retries=3):
+    """yfinance history 재시도 래퍼 (Rate Limit 대응)"""
+    for i in range(retries):
+        try:
+            t = yf.Ticker(ticker, session=_YF_SESSION)
+            h = t.history(period=period)
+            if not h.empty:
+                return h, t
+        except Exception:
+            pass
+        _time.sleep(1.5 * (i + 1))
+    return None, None
+
 
 FRED_API_KEY = "5986a12ba743119f15c35ae435aa758a"
 
@@ -221,16 +243,53 @@ def fred_get(series_id):
     return None, None
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600)
 def yf_last(ticker):
-    """yfinance 최근가 + 전일대비"""
-    try:
-        h = yf.Ticker(ticker).history(period="5d")
-        if len(h) >= 2:
-            return float(h['Close'].iloc[-1]), float(h['Close'].iloc[-2])
-    except Exception:
-        pass
+    """yfinance 최근가 + 전일대비 (Rate Limit 재시도)"""
+    h, _ = yf_history_safe(ticker, period="5d", retries=2)
+    if h is not None and len(h) >= 2:
+        return float(h['Close'].iloc[-1]), float(h['Close'].iloc[-2])
     return None, None
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_coinbase_premium():
+    """Coinbase 프리미엄 = (Coinbase BTC - Binance BTC) / Binance * 100
+    양수 = 미국 기관 매수 우위(강세) / 음수 = 매도 우위(약세)"""
+    try:
+        import requests
+        cb = None; bn = None
+        try:
+            r = requests.get("https://api.exchange.coinbase.com/products/BTC-USD/ticker", timeout=5)
+            if r.status_code == 200: cb = float(r.json()["price"])
+        except Exception: pass
+        try:
+            r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", timeout=5)
+            if r.status_code == 200: bn = float(r.json()["price"])
+        except Exception: pass
+        if cb and bn:
+            return {"premium": (cb-bn)/bn*100, "coinbase": cb, "binance": bn, "source": "live"}
+        h, _ = yf_history_safe("BTC-USD", period="5d", retries=2)
+        if h is not None and not h.empty:
+            return {"premium": None, "coinbase": float(h['Close'].iloc[-1]), "binance": None, "source": "fallback"}
+    except Exception: pass
+    return None
+
+
+def interpret_premium(premium):
+    """프리미엄 해석"""
+    if premium is None:
+        return ("⚪ 데이터 없음", "warn", "프리미엄 계산 불가")
+    if premium > 0.1:
+        return ("🟢 강한 매수세", "pos", f"+{premium:.3f}% · 미국 기관 적극 매수. 강세 - 추가 상승 여력")
+    elif premium > 0.02:
+        return ("🟢 매수 우위", "pos", f"+{premium:.3f}% · 미국 순매수. 코인베이스가 더 비쌈 = 미국 수요 강함")
+    elif premium > -0.02:
+        return ("⚪ 중립", "warn", f"{premium:+.3f}% · 미국-글로벌 가격 동일. 방향성 없음")
+    elif premium > -0.1:
+        return ("🔴 매도 우위", "neg", f"{premium:.3f}% · 미국 순매도. 코인베이스가 더 쌈 = 미국 자금 이탈")
+    else:
+        return ("🔴 강한 매도세", "neg", f"{premium:.3f}% · 미국 기관 적극 매도. 약세 - 추가 하락 주의")
 
 
 @st.cache_data(ttl=300)
@@ -882,14 +941,14 @@ SECTOR_ETFS = {
 }
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_sector_flow():
     """15개 섹터 ETF 1개월 등락률"""
     result = []
     for name, tk in SECTOR_ETFS.items():
         try:
-            h = yf.Ticker(tk).history(period="3mo")
-            if len(h) < 21: continue
+            h, _ = yf_history_safe(tk, period="3mo", retries=2)
+            if h is None or len(h) < 21: continue
             curr = float(h['Close'].iloc[-1])
             m_ago = float(h['Close'].iloc[-21])
             w_ago = float(h['Close'].iloc[-5]) if len(h) >= 5 else curr
@@ -1535,34 +1594,30 @@ def analyze_economy(macro, hist=None):
     }
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=60*60*24, show_spinner=False)  # 하루 1회
 def get_market_breadth():
-    """S&P500 상위 종목 중 200일선 위에 있는 비율"""
+    """S&P500 상위 종목 중 200일선 위 비율 (Rate Limit 완화 위해 25개만)"""
     try:
-        # 상위 50개로 약식 측정 (전체 500개 돌리면 너무 느림)
-        sample = SP500_TOP100[:50]
+        sample = SP500_TOP100[:25]
         above = 0; total = 0
         for tk in sample:
-            try:
-                h = yf.Ticker(tk).history(period="1y")
-                if len(h) >= 200:
-                    ma200 = h['Close'].rolling(200).mean().iloc[-1]
-                    if h['Close'].iloc[-1] > ma200: above += 1
-                    total += 1
-            except Exception:
-                continue
-        if total < 20: return None
+            h, _ = yf_history_safe(tk, period="1y", retries=2)
+            if h is not None and len(h) >= 200:
+                ma200 = h['Close'].rolling(200).mean().iloc[-1]
+                if h['Close'].iloc[-1] > ma200: above += 1
+                total += 1
+        if total < 10: return None
         return {"above_pct": above / total * 100, "sample": total}
     except Exception:
         return None
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600)
 def get_index_trend(ticker):
     """지수 추세 - 200일선 대비, 1M 변화"""
     try:
-        h = yf.Ticker(ticker).history(period="1y")
-        if len(h) < 200: return None
+        h, _ = yf_history_safe(ticker, period="1y", retries=2)
+        if h is None or len(h) < 200: return None
         curr = h['Close'].iloc[-1]
         ma200 = h['Close'].rolling(200).mean().iloc[-1]
         mom_1m = (curr - h['Close'].iloc[-21]) / h['Close'].iloc[-21] * 100 if len(h) >= 21 else 0
@@ -1926,8 +1981,8 @@ def get_crash_signals(macro):
 
     # 1. 美 30Y 국채 금리 (Bond Vigilante)
     try:
-        h = yf.Ticker("^TYX").history(period="1mo")
-        if not h.empty:
+        h, _ = yf_history_safe("^TYX", period="1mo", retries=2)
+        if h is not None and not h.empty:
             tyx = float(h['Close'].iloc[-1])
             tyx_w = float(h['Close'].iloc[-5]) if len(h) >= 5 else tyx
             chg = tyx - tyx_w
@@ -1970,9 +2025,9 @@ def get_crash_signals(macro):
 
     # 3. 금융주(XLF) vs 기술주(QQQ) 상대 흐름
     try:
-        xlf = yf.Ticker("XLF").history(period="3mo")
-        qqq = yf.Ticker("QQQ").history(period="3mo")
-        if not xlf.empty and not qqq.empty:
+        xlf, _ = yf_history_safe("XLF", period="3mo", retries=2)
+        qqq, _ = yf_history_safe("QQQ", period="3mo", retries=2)
+        if xlf is not None and qqq is not None and not xlf.empty and not qqq.empty:
             xlf_chg = (float(xlf['Close'].iloc[-1]) - float(xlf['Close'].iloc[0])) / float(xlf['Close'].iloc[0]) * 100
             qqq_chg = (float(qqq['Close'].iloc[-1]) - float(qqq['Close'].iloc[0])) / float(qqq['Close'].iloc[0]) * 100
             spread = xlf_chg - qqq_chg
@@ -2342,10 +2397,14 @@ ccy = "₩" if is_kr else "$"
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_stock_data(ticker):
-    """종목 데이터 5분 캐시 - 4년치"""
-    stock = yf.Ticker(ticker)
-    hist = stock.history(period="4y")
-    info = stock.info
+    """종목 데이터 5분 캐시 - 4년치 (Rate Limit 재시도)"""
+    hist, t = yf_history_safe(ticker, period="4y", retries=4)
+    if hist is None:
+        return pd.DataFrame(), {}
+    try:
+        info = t.info
+    except Exception:
+        info = {}
     return hist, info
 
 
@@ -2353,7 +2412,8 @@ try:
     with st.spinner("데이터 수집 중..."):
         hist, info = get_stock_data(ticker)
         if hist.empty:
-            st.error("데이터를 불러올 수 없습니다. 티커를 확인하세요.")
+            st.error("⚠️ 데이터를 불러올 수 없습니다. 티커가 틀렸거나, Yahoo Finance가 일시적으로 요청을 차단(Rate Limit)했을 수 있습니다.")
+            st.info("💡 잠시 (1~2분) 기다린 후 다시 시도하거나, 페이지를 새로고침 해주세요.")
             st.stop()
         hist = compute_indicators(hist)
         patterns = detect_patterns(hist['Close'])
@@ -2437,7 +2497,68 @@ try:
                             fmt_diff(us10y_d[0], us10y_d[1] or us10y_d[0], unit="%p") + " · 전일종가"), unsafe_allow_html=True)
     with m4: st.markdown(asset_card("WTI 원유", macro["wti"], prefix="$"), unsafe_allow_html=True)
 
-    # ===== 유동성 (FRED) =====
+    # ===== 코인 자금 흐름 (Coinbase 프리미엄 + 써클) =====
+    st.markdown("<div class='section-h'>🪙 코인 자금 흐름 <span style='color:#6b7280; font-weight:400; font-size:11px; margin-left:8px;'>· 미국 기관 매매 동향</span></div>", unsafe_allow_html=True)
+
+    cb_prem = get_coinbase_premium()
+    crcl_data = yf_last("CRCL")
+    coin_data = yf_last("COIN")
+
+    cc1, cc2, cc3 = st.columns(3)
+    with cc1:
+        if cb_prem and cb_prem["premium"] is not None:
+            p_name, p_cls, p_desc = interpret_premium(cb_prem["premium"])
+            st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid {"#4ade80" if p_cls=="pos" else "#f87171" if p_cls=="neg" else "#9ca3af"};'>
+            <div class='card-title'>Coinbase 프리미엄</div>
+            <div class='card-value {p_cls}'>{cb_prem["premium"]:+.3f}%</div>
+            <div class='card-sub {p_cls}'>{p_name}</div>
+            </div>""", unsafe_allow_html=True)
+        else:
+            st.markdown(f"""<div class='card' style='padding:18px 22px;'>
+            <div class='card-title'>Coinbase 프리미엄</div>
+            <div class='card-value' style='color:#6b7280;'>N/A</div>
+            <div class='card-sub'>API 일시 차단 - BTC 추세 참고</div>
+            </div>""", unsafe_allow_html=True)
+    with cc2:
+        if crcl_data and crcl_data[0]:
+            chg = (crcl_data[0]-crcl_data[1])/crcl_data[1]*100 if crcl_data[1] else 0
+            ccls = "pos" if chg >= 0 else "neg"
+            st.markdown(f"""<div class='card' style='padding:18px 22px;'>
+            <div class='card-title'>써클 (CRCL)</div>
+            <div class='card-value'>${crcl_data[0]:,.2f}</div>
+            <div class='card-sub {ccls}'>{'+' if chg>=0 else ''}{chg:.2f}% · USDC 발행사</div>
+            </div>""", unsafe_allow_html=True)
+        else:
+            st.markdown(f"""<div class='card' style='padding:18px 22px;'>
+            <div class='card-title'>써클 (CRCL)</div>
+            <div class='card-value' style='color:#6b7280;'>N/A</div>
+            <div class='card-sub'>데이터 없음</div>
+            </div>""", unsafe_allow_html=True)
+    with cc3:
+        if coin_data and coin_data[0]:
+            chg = (coin_data[0]-coin_data[1])/coin_data[1]*100 if coin_data[1] else 0
+            ccls = "pos" if chg >= 0 else "neg"
+            st.markdown(f"""<div class='card' style='padding:18px 22px;'>
+            <div class='card-title'>코인베이스 (COIN)</div>
+            <div class='card-value'>${coin_data[0]:,.2f}</div>
+            <div class='card-sub {ccls}'>{'+' if chg>=0 else ''}{chg:.2f}% · 거래소 대장주</div>
+            </div>""", unsafe_allow_html=True)
+        else:
+            st.markdown(f"""<div class='card' style='padding:18px 22px;'>
+            <div class='card-title'>코인베이스 (COIN)</div>
+            <div class='card-value' style='color:#6b7280;'>N/A</div>
+            <div class='card-sub'>데이터 없음</div>
+            </div>""", unsafe_allow_html=True)
+
+    # 프리미엄 종합 해석
+    if cb_prem and cb_prem["premium"] is not None:
+        p_name, p_cls, p_desc = interpret_premium(cb_prem["premium"])
+        st.markdown(f"""<div class='card' style='padding:16px 20px; margin-top:4px; border-left:3px solid {"#4ade80" if p_cls=="pos" else "#f87171" if p_cls=="neg" else "#9ca3af"};'>
+        <span class='{p_cls}' style='font-weight:800; font-size:14px;'>{p_name}</span>
+        <span style='color:#cbd5e1; font-size:12px; margin-left:8px;'>{p_desc}</span>
+        <div style='color:#6b7280; font-size:11px; margin-top:8px;'>📍 Coinbase ${cb_prem["coinbase"]:,.0f} vs Binance ${cb_prem["binance"]:,.0f} · 프리미엄 양수=미국기관 매수, 음수=매도</div>
+        </div>""", unsafe_allow_html=True)
+        st.caption("💡 써클(CRCL)은 USDC 스테이블코인 발행사. BTC를 직접 따라가진 않지만, 코인 거래량↑·시장 강세시 USDC 수요도 늘어 간접 영향. 프리미엄이 강한 매도세면 코인 시장 전반 위축 = 써클에도 약한 역풍.")
     st.markdown("<div class='section-h'>💧 유동성</div>", unsafe_allow_html=True)
     l1, l2, l3, l4 = st.columns(4)
 
@@ -2743,14 +2864,11 @@ try:
     st.plotly_chart(fig, use_container_width=True)
 
     # ===== 벤치마크 대비 상대 수익률 =====
-    @st.cache_data(ttl=600, show_spinner=False)
+    @st.cache_data(ttl=3600, show_spinner=False)
     def get_benchmark(period="1y"):
-        try:
-            spy = yf.Ticker("SPY").history(period=period)
-            qqq = yf.Ticker("QQQ").history(period=period)
-            return spy, qqq
-        except Exception:
-            return None, None
+        spy, _ = yf_history_safe("SPY", period=period, retries=2)
+        qqq, _ = yf_history_safe("QQQ", period=period, retries=2)
+        return spy, qqq
 
     spy_h, qqq_h = get_benchmark("1y")
     if spy_h is not None and not spy_h.empty:
