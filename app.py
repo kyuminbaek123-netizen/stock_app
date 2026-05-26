@@ -708,13 +708,22 @@ def score_all(hist, info, patterns, macro, is_kr=False):
     elif g > -0.10: s["성장성"] = 25; reasons_n.append(f"매출성장 {g*100:.0f}%")
     else: s["성장성"] = 10; reasons_n.append(f"매출 급감 {g*100:.0f}%")
 
-    # 8. VIX
+    # 8. VIX (+ 기간구조 백워데이션 + SKEW 반영)
     vix = macro.get("vix", (None, None))[0]
     if vix:
         if vix < 15: s["VIX"] = 70; reasons_p.append(f"VIX {vix:.1f} - 안정")
         elif vix < 20: s["VIX"] = 60
         elif vix < 30: s["VIX"] = 40; reasons_n.append(f"VIX {vix:.1f} - 변동성↑")
         else: s["VIX"] = 20; reasons_n.append(f"VIX {vix:.1f} - 극단공포")
+        # 백워데이션(단기>장기)이면 위험 = 점수 깎기
+        vix9d = macro.get("vix9d", (None, None))[0]
+        vix3m = macro.get("vix3m", (None, None))[0]
+        if vix9d and vix3m and vix9d > vix3m:
+            s["VIX"] = max(15, s["VIX"] - 20); reasons_n.append("VIX 백워데이션 - 시장 균열 신호")
+        # SKEW 높으면 블랙스완 헤지 급증
+        skew = macro.get("skew", (None, None))[0]
+        if skew and skew > 145:
+            s["VIX"] = max(15, s["VIX"] - 8); reasons_n.append(f"SKEW {skew:.0f} - 큰손 폭락대비")
     else:
         s["VIX"] = 50
 
@@ -729,12 +738,16 @@ def score_all(hist, info, patterns, macro, is_kr=False):
     else:
         s["공포탐욕"] = 50
 
-    # 10. 미국 금리
+    # 10. 미국 금리 (+ 실질금리)
     us10y = macro.get("us10y", (None, None))[0]
     if us10y:
         if us10y < 3.5: s["금리"] = 70; reasons_p.append(f"美 10Y {us10y:.2f}% - 우호")
         elif us10y < 4.5: s["금리"] = 55
         else: s["금리"] = 35; reasons_n.append(f"美 10Y {us10y:.2f}% - 부담")
+        # 실질금리 높으면 밸류 부담
+        rr = macro.get("real_rate", (None, None))[0]
+        if rr and rr > 2.5:
+            s["금리"] = max(20, s["금리"] - 12); reasons_n.append(f"실질금리 {rr:.2f}% - 밸류 부담")
     else:
         s["금리"] = 50
 
@@ -2266,6 +2279,16 @@ def make_market_summary(macro, breadth=None, sp_trend=None, ndx_trend=None):
         elif vix > 30: negatives.append("VIX 극단 (공포)"); weighted_score -= 10
         elif vix > 25: negatives.append("VIX 변동성 확대"); weighted_score -= 6
         elif vix > 20: negatives.append("VIX 경계"); weighted_score -= 3
+        # VIX 백워데이션 (단기>장기) = 즉각 위험
+        vix9d = macro.get("vix9d", (None, None))[0]
+        vix3m = macro.get("vix3m", (None, None))[0]
+        if vix9d and vix3m:
+            if vix9d > vix3m:
+                negatives.append("VIX 백워데이션 - 시장 균열"); weighted_score -= 8
+        # SKEW 블랙스완
+        skew = macro.get("skew", (None, None))[0]
+        if skew and skew > 145:
+            negatives.append(f"SKEW {skew:.0f} - 큰손 폭락대비"); weighted_score -= 4
 
     # 2. 공포탐욕 (가중치 中)
     fg = macro.get("fg", (None, None))[0]
@@ -2290,6 +2313,11 @@ def make_market_summary(macro, breadth=None, sp_trend=None, ndx_trend=None):
         if us10y > 5: negatives.append(f"美10Y {us10y:.2f}% - 극단 고금리"); weighted_score -= 8
         elif us10y > 4.5: negatives.append(f"美10Y {us10y:.2f}% - 고금리 부담"); weighted_score -= 4
         elif us10y < 3.5: positives.append("저금리 환경"); weighted_score += 4
+    # 4-1. 실질금리 (TIPS)
+    rr = macro.get("real_rate", (None, None))[0]
+    if rr:
+        if rr > 2.5: negatives.append(f"실질금리 {rr:.2f}% - 밸류 부담"); weighted_score -= 6
+        elif rr < 1: positives.append(f"실질금리 {rr:.2f}% - 우호"); weighted_score += 3
 
     # 5. 하이일드 스프레드 (신용 리스크)
     hy = macro.get("hy_spread", (None, None))[0]
@@ -3124,47 +3152,56 @@ try:
             </div>""", unsafe_allow_html=True)
 
         # 호가창 스타일 차트 (현재가 주변 행사가별 OI)
-        calls = opt["calls"]; puts = opt["puts"]
-        # 현재가 ±15% 범위만
-        lo, hi = curr * 0.85, curr * 1.15
+        calls = opt["calls"].copy(); puts = opt["puts"].copy()
+        # OI가 전부 0이면 volume(거래량) 사용
+        oi_col = 'openInterest'
+        if calls['openInterest'].sum() == 0 and puts['openInterest'].sum() == 0:
+            oi_col = 'volume'
+        # 현재가 ±25% 범위 (넓게)
+        lo, hi = curr * 0.75, curr * 1.25
         calls_f = calls[(calls['strike'] >= lo) & (calls['strike'] <= hi)]
         puts_f = puts[(puts['strike'] >= lo) & (puts['strike'] <= hi)]
+        # 그래도 비면 전체 사용
+        if calls_f.empty and puts_f.empty:
+            calls_f = calls; puts_f = puts
 
-        # 행사가별로 콜/풋 OI 나란히
+        # 행사가별로 콜/풋 나란히
         strikes = sorted(set(calls_f['strike'].tolist() + puts_f['strike'].tolist()))
-        call_oi_map = dict(zip(calls_f['strike'], calls_f['openInterest']))
-        put_oi_map = dict(zip(puts_f['strike'], puts_f['openInterest']))
+        call_oi_map = dict(zip(calls_f['strike'], calls_f[oi_col]))
+        put_oi_map = dict(zip(puts_f['strike'], puts_f[oi_col]))
+        oi_label = "OI" if oi_col == 'openInterest' else "거래량"
 
-        fig_opt = go.Figure()
-        fig_opt.add_trace(go.Bar(
-            y=[f"{s:,.1f}" for s in strikes],
-            x=[-put_oi_map.get(s, 0) for s in strikes],  # 풋은 왼쪽(음수)
-            orientation='h', name='풋 (지지)',
-            marker=dict(color='#f87171'),
-            hovertemplate='행사가 %{y}<br>풋 OI: %{customdata:,}<extra></extra>',
-            customdata=[put_oi_map.get(s, 0) for s in strikes]
-        ))
-        fig_opt.add_trace(go.Bar(
-            y=[f"{s:,.1f}" for s in strikes],
-            x=[call_oi_map.get(s, 0) for s in strikes],  # 콜은 오른쪽
-            orientation='h', name='콜 (저항)',
-            marker=dict(color='#4ade80'),
-            hovertemplate='행사가 %{y}<br>콜 OI: %{x:,}<extra></extra>'
-        ))
-        # 현재가 라인
-        fig_opt.add_hline(y=f"{min(strikes, key=lambda s: abs(s-curr)):,.1f}",
-                          line=dict(color='#fafafa', width=1, dash='dot'))
-        fig_opt.update_layout(
-            height=460, barmode='relative',
-            margin=dict(l=10, r=10, t=30, b=10),
-            plot_bgcolor='#08090d', paper_bgcolor='#08090d',
-            font=dict(family="Inter", color='#d1d5db', size=10),
-            xaxis=dict(title="← 풋 OI · 콜 OI →", gridcolor='#1c1f26', zeroline=True,
-                       zerolinecolor='#374151', tickformat=',d'),
-            yaxis=dict(title="행사가", showgrid=False, tickfont=dict(family='JetBrains Mono', size=10)),
-            legend=dict(orientation="h", y=1.05, x=0, bgcolor='rgba(0,0,0,0)'),
-        )
-        st.plotly_chart(fig_opt, use_container_width=True)
+        if not strikes or (sum(call_oi_map.values()) == 0 and sum(put_oi_map.values()) == 0):
+            st.info("옵션 미결제약정/거래량 데이터가 없습니다 (만기 임박 또는 거래 한산).")
+        else:
+            fig_opt = go.Figure()
+            fig_opt.add_trace(go.Bar(
+                y=[f"{s:,.1f}" for s in strikes],
+                x=[-put_oi_map.get(s, 0) for s in strikes],
+                orientation='h', name='풋 (지지)',
+                marker=dict(color='#f87171'),
+                hovertemplate='행사가 %{y}<br>풋 '+oi_label+': %{customdata:,}<extra></extra>',
+                customdata=[put_oi_map.get(s, 0) for s in strikes]
+            ))
+            fig_opt.add_trace(go.Bar(
+                y=[f"{s:,.1f}" for s in strikes],
+                x=[call_oi_map.get(s, 0) for s in strikes],
+                orientation='h', name='콜 (저항)',
+                marker=dict(color='#4ade80'),
+                hovertemplate='행사가 %{y}<br>콜 '+oi_label+': %{x:,}<extra></extra>'
+            ))
+            fig_opt.update_layout(
+                height=max(400, len(strikes)*22), barmode='relative',
+                margin=dict(l=10, r=10, t=30, b=10),
+                plot_bgcolor='#08090d', paper_bgcolor='#08090d',
+                font=dict(family="Inter", color='#d1d5db', size=10),
+                xaxis=dict(title=f"← 풋 {oi_label} · 콜 {oi_label} →", gridcolor='#1c1f26', zeroline=True,
+                           zerolinecolor='#374151', tickformat=',d'),
+                yaxis=dict(title=f"행사가 (현재가 {ccy}{curr:,.1f})", showgrid=False,
+                           tickfont=dict(family='JetBrains Mono', size=10)),
+                legend=dict(orientation="h", y=1.04, x=0, bgcolor='rgba(0,0,0,0)'),
+            )
+            st.plotly_chart(fig_opt, use_container_width=True)
 
         # 해석
         pcr = opt["pcr"]
