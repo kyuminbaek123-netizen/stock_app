@@ -332,6 +332,11 @@ def get_macro_all():
     m["recession_prob"] = fred_get("RECPROUSM156N")  # NY연준 경기침체 확률
     m["gdp"] = fred_get("A191RL1Q225SBEA")          # 실질 GDP 성장률 (분기)
     m["payrolls"] = fred_get("PAYEMS")                # 비농업 고용
+    m["real_rate"] = fred_get("DFII10")               # 10년 실질금리 (TIPS)
+    m["vix9d"] = yf_last("^VIX9D")                     # 9일 VIX
+    m["vix3m"] = yf_last("^VIX3M")                     # 3개월 VIX
+    m["vvix"] = yf_last("^VVIX")                       # VIX의 변동성
+    m["skew"] = yf_last("^SKEW")                       # 블랙스완 지수
     # YoY 변화율
     m["cpi_yoy_v"] = fred_yoy("CPIAUCSL")
     m["core_cpi_yoy"] = fred_yoy("CPILFESL")
@@ -2381,6 +2386,48 @@ def fmt_diff(cur, prev, unit="", pct=False):
 st.markdown("<div class='title-bar'>📈 Alpha Pro Strategic Terminal v3</div>", unsafe_allow_html=True)
 st.markdown(f"<div class='title-sub'>AI 차트패턴 인식 · 매크로 종합 · 6개월 목표가 예측 | {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>", unsafe_allow_html=True)
 
+# ===== 오늘의 투자 명언 (날짜별 고정) =====
+QUOTES = [
+    ("시장은 인내심 없는 사람의 돈을 인내심 있는 사람에게 옮기는 도구다", "워런 버핏"),
+    ("남들이 욕심낼 때 두려워하고, 남들이 두려워할 때 욕심내라", "워런 버핏"),
+    ("10년간 보유할 주식이 아니라면 10분도 보유하지 마라", "워런 버핏"),
+    ("위험은 자신이 무엇을 하는지 모르는 데서 온다", "워런 버핏"),
+    ("주식 시장에서 가장 위험한 말은 '이번엔 다르다'이다", "존 템플턴"),
+    ("강세장은 비관 속에서 태어나, 회의 속에서 자라며, 낙관 속에서 성숙하고, 행복 속에서 죽는다", "존 템플턴"),
+    ("싸게 사는 것이 가장 확실한 수익의 원천이다", "벤저민 그레이엄"),
+    ("투자자의 가장 큰 적은 바로 자기 자신이다", "벤저민 그레이엄"),
+    ("가격은 당신이 지불하는 것이고, 가치는 당신이 얻는 것이다", "벤저민 그레이엄"),
+    ("손실을 자르고 이익은 달리게 하라", "제시 리버모어"),
+    ("시장은 항상 옳다. 시장과 싸우지 마라", "제시 리버모어"),
+    ("기다림이 돈을 벌게 한다. 생각이 아니라", "제시 리버모어"),
+    ("계란을 한 바구니에 담지 마라", "투자 격언"),
+    ("떨어지는 칼날을 잡지 마라", "월가 격언"),
+    ("소문에 사서 뉴스에 팔아라", "월가 격언"),
+    ("나무는 하늘까지 자라지 않는다", "월가 격언"),
+    ("공포에 사고 환희에 팔아라", "월가 격언"),
+    ("당신이 잠든 사이에도 돈이 일하게 하라", "월가 격언"),
+    ("시간이 시장을 이긴다. 타이밍을 맞추려 하지 마라", "피터 린치"),
+    ("당신이 이해하지 못하는 것에 투자하지 마라", "피터 린치"),
+    ("주식 시장의 조정에서 잃은 돈보다, 조정을 예상하다 잃은 돈이 더 많다", "피터 린치"),
+    ("좋은 회사를 합리적인 가격에 사는 것이, 그저 그런 회사를 싸게 사는 것보다 낫다", "워런 버핏"),
+    ("분산투자는 무지에 대한 방어책이다", "워런 버핏"),
+    ("손실 후엔 쉬어라. 복수하려는 매매가 계좌를 비운다", "트레이딩 격언"),
+    ("계획대로 매매하고, 매매한 대로 따르라", "트레이딩 격언"),
+    ("시장에 늘 머물 필요는 없다. 현금도 포지션이다", "트레이딩 격언"),
+    ("한 번의 큰 손실이 열 번의 작은 이익을 지운다", "리스크 관리 격언"),
+    ("욕심은 차트를 왜곡시킨다", "트레이딩 격언"),
+    ("최고의 매매는 때로 아무것도 하지 않는 것이다", "트레이딩 격언"),
+    ("물타기는 전략이 아니라 희망이다", "리스크 관리 격언"),
+]
+# 날짜 기반 고정 인덱스
+_day_seed = int(datetime.now().strftime("%Y%m%d"))
+_q = QUOTES[_day_seed % len(QUOTES)]
+st.markdown(f"""<div style='background:linear-gradient(135deg, #0f1117, #0a0c12); border:1px solid #1c1f26; border-left:3px solid #fbbf24; border-radius:10px; padding:16px 22px; margin-bottom:24px;'>
+<div style='font-size:10px; color:#6b7280; letter-spacing:0.15em; font-weight:600; margin-bottom:6px;'>💬 오늘의 한 마디</div>
+<div style='font-size:15px; color:#e5e7eb; font-style:italic; line-height:1.5;'>"{_q[0]}"</div>
+<div style='font-size:12px; color:#9ca3af; margin-top:6px; text-align:right;'>— {_q[1]}</div>
+</div>""", unsafe_allow_html=True)
+
 with st.form("f"):
     c1, c2 = st.columns([5, 1])
     with c1:
@@ -2394,6 +2441,64 @@ if not ticker:
 
 is_kr = ticker.endswith(".KS") or ticker.endswith(".KQ")
 ccy = "₩" if is_kr else "$"
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_option_chain(ticker):
+    """가장 가까운 만기의 옵션 체인 분석
+    - 콜/풋 최대 OI(미결제약정) 행사가
+    - Max Pain (옵션 매도자가 가장 이득인 가격 = 마감 예상가)
+    """
+    try:
+        t = yf.Ticker(ticker, session=_YF_SESSION)
+        exps = t.options
+        if not exps: return None
+        # 가장 가까운 만기
+        expiry = exps[0]
+        chain = t.option_chain(expiry)
+        calls = chain.calls[['strike', 'openInterest', 'volume', 'lastPrice']].copy()
+        puts = chain.puts[['strike', 'openInterest', 'volume', 'lastPrice']].copy()
+        calls = calls.fillna(0)
+        puts = puts.fillna(0)
+        if calls.empty or puts.empty: return None
+
+        # 최대 OI 행사가
+        max_call = calls.loc[calls['openInterest'].idxmax()]
+        max_put = puts.loc[puts['openInterest'].idxmax()]
+
+        # Max Pain 계산 (모든 행사가에서 총 손실 최소가 되는 지점)
+        all_strikes = sorted(set(calls['strike'].tolist() + puts['strike'].tolist()))
+        min_pain = None; max_pain_strike = None
+        for s in all_strikes:
+            # 이 가격에서 만기시 콜 매수자 총 가치
+            call_pain = ((s - calls['strike']).clip(lower=0) * calls['openInterest']).sum()
+            put_pain = ((puts['strike'] - s).clip(lower=0) * puts['openInterest']).sum()
+            total_pain = call_pain + put_pain
+            if min_pain is None or total_pain < min_pain:
+                min_pain = total_pain
+                max_pain_strike = s
+
+        # 콜/풋 OI 총합 (시장 심리)
+        total_call_oi = calls['openInterest'].sum()
+        total_put_oi = puts['openInterest'].sum()
+        pcr = total_put_oi / total_call_oi if total_call_oi > 0 else 0
+
+        # 상위 행사가별 OI (호가창용) - 현재가 주변
+        return {
+            "expiry": expiry,
+            "max_call_strike": float(max_call['strike']),
+            "max_call_oi": int(max_call['openInterest']),
+            "max_put_strike": float(max_put['strike']),
+            "max_put_oi": int(max_put['openInterest']),
+            "max_pain": float(max_pain_strike),
+            "pcr": pcr,
+            "calls": calls.sort_values('strike'),
+            "puts": puts.sort_values('strike'),
+            "total_call_oi": int(total_call_oi),
+            "total_put_oi": int(total_put_oi),
+        }
+    except Exception:
+        return None
+
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_stock_data(ticker):
@@ -2477,6 +2582,69 @@ try:
         else:
             st.markdown(card("하이일드 스프레드", "N/A", "신용시장"), unsafe_allow_html=True)
 
+    # ===== 변동성 구조 (Tail Risk) =====
+    vix_v = macro.get("vix", (None, None))[0]
+    vix9d = macro.get("vix9d", (None, None))[0]
+    vix3m = macro.get("vix3m", (None, None))[0]
+    vvix = macro.get("vvix", (None, None))[0]
+    skew = macro.get("skew", (None, None))[0]
+
+    if vix_v and (vix9d or vix3m or vvix or skew):
+        st.markdown("<div class='section-h'>🌪️ 변동성 구조 (Tail Risk) <span style='color:#6b7280; font-weight:400; font-size:11px; margin-left:8px;'>· 시장의 숨은 균열 감지</span></div>", unsafe_allow_html=True)
+        v1, v2, v3 = st.columns(3)
+        with v1:
+            # VIX 기간구조 (콘탱고/백워데이션)
+            if vix9d and vix3m:
+                if vix9d > vix3m:
+                    struct, scls, sdesc = "🔴 백워데이션", "neg", "단기>장기 - 즉각적 위험 신호"
+                elif vix3m - vix9d > 3:
+                    struct, scls, sdesc = "🟢 정상 콘탱고", "pos", "장기>단기 - 안정적"
+                else:
+                    struct, scls, sdesc = "🟡 평탄화", "warn", "구조 평탄 - 경계"
+                st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid {"#f87171" if scls=="neg" else "#fbbf24" if scls=="warn" else "#4ade80"};'>
+                <div class='card-title'>VIX 기간구조</div>
+                <div class='card-value {scls}' style='font-size:20px;'>{struct}</div>
+                <div class='card-sub'>9D {vix9d:.1f} / 3M {vix3m:.1f} · {sdesc}</div>
+                </div>""", unsafe_allow_html=True)
+            else:
+                st.markdown(f"""<div class='card' style='padding:18px 22px;'>
+                <div class='card-title'>VIX 기간구조</div>
+                <div class='card-value' style='color:#6b7280;'>N/A</div>
+                <div class='card-sub'>데이터 수집 중</div></div>""", unsafe_allow_html=True)
+        with v2:
+            # VVIX (변동성의 변동성)
+            if vvix:
+                if vvix > 110: vc, vd = "neg", "급변동 위험 - 옵션시장 불안"
+                elif vvix > 95: vc, vd = "warn", "변동성 상승 압력"
+                else: vc, vd = "pos", "안정적"
+                st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid {"#f87171" if vc=="neg" else "#fbbf24" if vc=="warn" else "#4ade80"};'>
+                <div class='card-title'>VVIX (변동성의 변동성)</div>
+                <div class='card-value {vc}'>{vvix:.1f}</div>
+                <div class='card-sub'>{vd}</div>
+                </div>""", unsafe_allow_html=True)
+            else:
+                st.markdown(f"""<div class='card' style='padding:18px 22px;'>
+                <div class='card-title'>VVIX</div>
+                <div class='card-value' style='color:#6b7280;'>N/A</div>
+                <div class='card-sub'>데이터 수집 중</div></div>""", unsafe_allow_html=True)
+        with v3:
+            # SKEW (블랙스완 지수)
+            if skew:
+                if skew > 145: kc, kd = "neg", "블랙스완 헤지 급증 - 큰손 폭락 대비"
+                elif skew > 135: kc, kd = "warn", "꼬리위험 헤지 증가"
+                else: kc, kd = "pos", "정상 범위"
+                st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid {"#f87171" if kc=="neg" else "#fbbf24" if kc=="warn" else "#4ade80"};'>
+                <div class='card-title'>SKEW (블랙스완 지수)</div>
+                <div class='card-value {kc}'>{skew:.0f}</div>
+                <div class='card-sub'>{kd}</div>
+                </div>""", unsafe_allow_html=True)
+            else:
+                st.markdown(f"""<div class='card' style='padding:18px 22px;'>
+                <div class='card-title'>SKEW</div>
+                <div class='card-value' style='color:#6b7280;'>N/A</div>
+                <div class='card-sub'>데이터 수집 중</div></div>""", unsafe_allow_html=True)
+        st.caption("💡 **백워데이션**(단기VIX>장기VIX)은 즉각적 시장 균열 신호. **VVIX**↑는 옵션시장 불안. **SKEW**↑는 큰손들이 폭락 보험(OTM 풋)을 비싸게 사들이는 중 = 꼬리위험 경계.")
+
     # ===== 매크로 (환율, 금리, 유가) =====
     st.markdown("<div class='section-h'>🌍 매크로</div>", unsafe_allow_html=True)
     m1, m2, m3, m4 = st.columns(4)
@@ -2497,68 +2665,6 @@ try:
                             fmt_diff(us10y_d[0], us10y_d[1] or us10y_d[0], unit="%p") + " · 전일종가"), unsafe_allow_html=True)
     with m4: st.markdown(asset_card("WTI 원유", macro["wti"], prefix="$"), unsafe_allow_html=True)
 
-    # ===== 코인 자금 흐름 (Coinbase 프리미엄 + 써클) =====
-    st.markdown("<div class='section-h'>🪙 코인 자금 흐름 <span style='color:#6b7280; font-weight:400; font-size:11px; margin-left:8px;'>· 미국 기관 매매 동향</span></div>", unsafe_allow_html=True)
-
-    cb_prem = get_coinbase_premium()
-    crcl_data = yf_last("CRCL")
-    coin_data = yf_last("COIN")
-
-    cc1, cc2, cc3 = st.columns(3)
-    with cc1:
-        if cb_prem and cb_prem["premium"] is not None:
-            p_name, p_cls, p_desc = interpret_premium(cb_prem["premium"])
-            st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid {"#4ade80" if p_cls=="pos" else "#f87171" if p_cls=="neg" else "#9ca3af"};'>
-            <div class='card-title'>Coinbase 프리미엄</div>
-            <div class='card-value {p_cls}'>{cb_prem["premium"]:+.3f}%</div>
-            <div class='card-sub {p_cls}'>{p_name}</div>
-            </div>""", unsafe_allow_html=True)
-        else:
-            st.markdown(f"""<div class='card' style='padding:18px 22px;'>
-            <div class='card-title'>Coinbase 프리미엄</div>
-            <div class='card-value' style='color:#6b7280;'>N/A</div>
-            <div class='card-sub'>API 일시 차단 - BTC 추세 참고</div>
-            </div>""", unsafe_allow_html=True)
-    with cc2:
-        if crcl_data and crcl_data[0]:
-            chg = (crcl_data[0]-crcl_data[1])/crcl_data[1]*100 if crcl_data[1] else 0
-            ccls = "pos" if chg >= 0 else "neg"
-            st.markdown(f"""<div class='card' style='padding:18px 22px;'>
-            <div class='card-title'>써클 (CRCL)</div>
-            <div class='card-value'>${crcl_data[0]:,.2f}</div>
-            <div class='card-sub {ccls}'>{'+' if chg>=0 else ''}{chg:.2f}% · USDC 발행사</div>
-            </div>""", unsafe_allow_html=True)
-        else:
-            st.markdown(f"""<div class='card' style='padding:18px 22px;'>
-            <div class='card-title'>써클 (CRCL)</div>
-            <div class='card-value' style='color:#6b7280;'>N/A</div>
-            <div class='card-sub'>데이터 없음</div>
-            </div>""", unsafe_allow_html=True)
-    with cc3:
-        if coin_data and coin_data[0]:
-            chg = (coin_data[0]-coin_data[1])/coin_data[1]*100 if coin_data[1] else 0
-            ccls = "pos" if chg >= 0 else "neg"
-            st.markdown(f"""<div class='card' style='padding:18px 22px;'>
-            <div class='card-title'>코인베이스 (COIN)</div>
-            <div class='card-value'>${coin_data[0]:,.2f}</div>
-            <div class='card-sub {ccls}'>{'+' if chg>=0 else ''}{chg:.2f}% · 거래소 대장주</div>
-            </div>""", unsafe_allow_html=True)
-        else:
-            st.markdown(f"""<div class='card' style='padding:18px 22px;'>
-            <div class='card-title'>코인베이스 (COIN)</div>
-            <div class='card-value' style='color:#6b7280;'>N/A</div>
-            <div class='card-sub'>데이터 없음</div>
-            </div>""", unsafe_allow_html=True)
-
-    # 프리미엄 종합 해석
-    if cb_prem and cb_prem["premium"] is not None:
-        p_name, p_cls, p_desc = interpret_premium(cb_prem["premium"])
-        st.markdown(f"""<div class='card' style='padding:16px 20px; margin-top:4px; border-left:3px solid {"#4ade80" if p_cls=="pos" else "#f87171" if p_cls=="neg" else "#9ca3af"};'>
-        <span class='{p_cls}' style='font-weight:800; font-size:14px;'>{p_name}</span>
-        <span style='color:#cbd5e1; font-size:12px; margin-left:8px;'>{p_desc}</span>
-        <div style='color:#6b7280; font-size:11px; margin-top:8px;'>📍 Coinbase ${cb_prem["coinbase"]:,.0f} vs Binance ${cb_prem["binance"]:,.0f} · 프리미엄 양수=미국기관 매수, 음수=매도</div>
-        </div>""", unsafe_allow_html=True)
-        st.caption("💡 써클(CRCL)은 USDC 스테이블코인 발행사. BTC를 직접 따라가진 않지만, 코인 거래량↑·시장 강세시 USDC 수요도 늘어 간접 영향. 프리미엄이 강한 매도세면 코인 시장 전반 위축 = 써클에도 약한 역풍.")
     st.markdown("<div class='section-h'>💧 유동성</div>", unsafe_allow_html=True)
     l1, l2, l3, l4 = st.columns(4)
 
@@ -2581,6 +2687,52 @@ try:
     with l2: st.markdown(liq_card("연준 지급준비금", macro["reserves"], "은행 준비금"), unsafe_allow_html=True)
     with l3: st.markdown(liq_card("역레포(RRP)", macro["rrp"], "유동성 흡수"), unsafe_allow_html=True)
     with l4: st.markdown(liq_card("TGA 잔액", macro["tga"], "재무부 계정"), unsafe_allow_html=True)
+
+    # Net Liquidity (실질 유동성) + 실질금리
+    nl1, nl2 = st.columns(2)
+    with nl1:
+        # Net Liquidity = 연준자산 - TGA - RRP (단위 통일: B)
+        fa = macro.get("fed_assets", (None, None))[0]   # 백만$ 단위 (WALCL)
+        tga = macro.get("tga", (None, None))[0]
+        rrp = macro.get("rrp", (None, None))[0]
+        if fa and tga is not None and rrp is not None:
+            # WALCL은 백만달러, TGA(WTREGEN)도 백만, RRP는 십억
+            net_liq = (fa - tga) / 1000 - rrp  # 십억$ 단위로
+            net_liq_t = net_liq / 1000  # 조$ 
+            st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid #60a5fa;'>
+            <div class='card-title'>💧 Net Liquidity (실질 유동성)</div>
+            <div class='card-value'>{net_liq_t:.2f}T</div>
+            <div class='card-sub'>연준자산 − TGA − RRP · 증시 유동성 핵심</div>
+            </div>""", unsafe_allow_html=True)
+        else:
+            st.markdown(f"""<div class='card' style='padding:18px 22px;'>
+            <div class='card-title'>💧 Net Liquidity</div>
+            <div class='card-value' style='color:#6b7280;'>N/A</div>
+            <div class='card-sub'>데이터 수집 중</div>
+            </div>""", unsafe_allow_html=True)
+    with nl2:
+        rr = macro.get("real_rate", (None, None))
+        if rr[0] is not None:
+            rr_v = rr[0]
+            rr_prev = rr[1] if rr[1] is not None else rr_v
+            rr_chg = rr_v - rr_prev
+            # 실질금리 높으면 위험자산 부담
+            if rr_v > 2.5: rr_cls, rr_desc = "neg", "고실질금리 - 밸류에이션 부담 큼"
+            elif rr_v > 2: rr_cls, rr_desc = "warn", "실질금리 상승 - 주의"
+            elif rr_v > 1: rr_cls, rr_desc = "warn", "중립 수준"
+            else: rr_cls, rr_desc = "pos", "저실질금리 - 위험자산 우호"
+            st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid {"#f87171" if rr_cls=="neg" else "#fbbf24" if rr_cls=="warn" else "#4ade80"};'>
+            <div class='card-title'>📊 10년 실질금리 (TIPS)</div>
+            <div class='card-value {rr_cls}'>{rr_v:.2f}%</div>
+            <div class='card-sub {rr_cls}'>{rr_desc} · 전일 {rr_chg:+.2f}%p</div>
+            </div>""", unsafe_allow_html=True)
+        else:
+            st.markdown(f"""<div class='card' style='padding:18px 22px;'>
+            <div class='card-title'>📊 10년 실질금리</div>
+            <div class='card-value' style='color:#6b7280;'>N/A</div>
+            <div class='card-sub'>데이터 수집 중</div>
+            </div>""", unsafe_allow_html=True)
+    st.caption("💡 Net Liquidity가 늘면 증시로 돈이 유입(상승 우호), 줄면 유동성 위축. 실질금리(명목-기대인플레)가 치솟으면 성장주 밸류에이션 붕괴 위험.")
 
     # ===== 시장 종합 결론 (이미 위에서 계산함) =====
     pos_html = "<br>".join(f"<span class='pos'>✓ {p}</span>" for p in mkt["positives"]) or "<span style='color:#64748b;'>특이사항 없음</span>"
@@ -2938,6 +3090,96 @@ try:
             <div class='card-value {qqq_cls}'>{vs_qqq:+.2f}%p</div>
             <div class='card-sub {qqq_cls}'>{qqq_label} · QQQ {qqq_perf:+.2f}%</div>
             </div>""", unsafe_allow_html=True)
+
+    # ===== 옵션 체인 분석 (마감 예상가) =====
+    opt = get_option_chain(ticker)
+    if opt:
+        st.markdown(f"<div class='section-h'>🎰 옵션 체인 분석 <span style='color:#6b7280; font-weight:400; font-size:11px; margin-left:8px;'>· 만기 {opt['expiry']} · 콜/풋 최대 물량 + 예상 마감가</span></div>", unsafe_allow_html=True)
+
+        # 3개 핵심 카드
+        oc1, oc2, oc3 = st.columns(3)
+        with oc1:
+            # Max Pain (마감 예상가)
+            mp = opt["max_pain"]
+            mp_diff = (mp - curr) / curr * 100
+            mp_cls = "pos" if mp_diff > 0 else "neg" if mp_diff < 0 else "warn"
+            st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid #fbbf24;'>
+            <div class='card-title'>🎯 Max Pain (마감 예상가)</div>
+            <div class='card-value'>{ccy}{mp:,.2f}</div>
+            <div class='card-sub {mp_cls}'>현재가 대비 {mp_diff:+.1f}% · 옵션상 수렴 지점</div>
+            </div>""", unsafe_allow_html=True)
+        with oc2:
+            # 콜 최대 물량 (저항선)
+            st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid #4ade80;'>
+            <div class='card-title'>📈 콜 최대 물량 (저항선)</div>
+            <div class='card-value pos'>{ccy}{opt['max_call_strike']:,.2f}</div>
+            <div class='card-sub'>OI {opt['max_call_oi']:,} · 이 위로 잘 안 감</div>
+            </div>""", unsafe_allow_html=True)
+        with oc3:
+            # 풋 최대 물량 (지지선)
+            st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid #f87171;'>
+            <div class='card-title'>📉 풋 최대 물량 (지지선)</div>
+            <div class='card-value neg'>{ccy}{opt['max_put_strike']:,.2f}</div>
+            <div class='card-sub'>OI {opt['max_put_oi']:,} · 이 아래로 잘 안 감</div>
+            </div>""", unsafe_allow_html=True)
+
+        # 호가창 스타일 차트 (현재가 주변 행사가별 OI)
+        calls = opt["calls"]; puts = opt["puts"]
+        # 현재가 ±15% 범위만
+        lo, hi = curr * 0.85, curr * 1.15
+        calls_f = calls[(calls['strike'] >= lo) & (calls['strike'] <= hi)]
+        puts_f = puts[(puts['strike'] >= lo) & (puts['strike'] <= hi)]
+
+        # 행사가별로 콜/풋 OI 나란히
+        strikes = sorted(set(calls_f['strike'].tolist() + puts_f['strike'].tolist()))
+        call_oi_map = dict(zip(calls_f['strike'], calls_f['openInterest']))
+        put_oi_map = dict(zip(puts_f['strike'], puts_f['openInterest']))
+
+        fig_opt = go.Figure()
+        fig_opt.add_trace(go.Bar(
+            y=[f"{s:,.1f}" for s in strikes],
+            x=[-put_oi_map.get(s, 0) for s in strikes],  # 풋은 왼쪽(음수)
+            orientation='h', name='풋 (지지)',
+            marker=dict(color='#f87171'),
+            hovertemplate='행사가 %{y}<br>풋 OI: %{customdata:,}<extra></extra>',
+            customdata=[put_oi_map.get(s, 0) for s in strikes]
+        ))
+        fig_opt.add_trace(go.Bar(
+            y=[f"{s:,.1f}" for s in strikes],
+            x=[call_oi_map.get(s, 0) for s in strikes],  # 콜은 오른쪽
+            orientation='h', name='콜 (저항)',
+            marker=dict(color='#4ade80'),
+            hovertemplate='행사가 %{y}<br>콜 OI: %{x:,}<extra></extra>'
+        ))
+        # 현재가 라인
+        fig_opt.add_hline(y=f"{min(strikes, key=lambda s: abs(s-curr)):,.1f}",
+                          line=dict(color='#fafafa', width=1, dash='dot'))
+        fig_opt.update_layout(
+            height=460, barmode='relative',
+            margin=dict(l=10, r=10, t=30, b=10),
+            plot_bgcolor='#08090d', paper_bgcolor='#08090d',
+            font=dict(family="Inter", color='#d1d5db', size=10),
+            xaxis=dict(title="← 풋 OI · 콜 OI →", gridcolor='#1c1f26', zeroline=True,
+                       zerolinecolor='#374151', tickformat=',d'),
+            yaxis=dict(title="행사가", showgrid=False, tickfont=dict(family='JetBrains Mono', size=10)),
+            legend=dict(orientation="h", y=1.05, x=0, bgcolor='rgba(0,0,0,0)'),
+        )
+        st.plotly_chart(fig_opt, use_container_width=True)
+
+        # 해석
+        pcr = opt["pcr"]
+        if pcr > 1.2:
+            pcr_msg, pcr_cls = "풋 우세 - 하락 헤지/공포 심리 강함", "neg"
+        elif pcr > 0.9:
+            pcr_msg, pcr_cls = "중립 - 균형 잡힌 포지션", "warn"
+        else:
+            pcr_msg, pcr_cls = "콜 우세 - 상승 기대 심리 강함", "pos"
+        st.markdown(f"""<div class='card' style='padding:14px 18px;'>
+        <span style='color:#9ca3af; font-size:12px;'>Put/Call 비율</span>
+        <span class='{pcr_cls}' style='font-weight:800; font-size:15px; margin-left:8px; font-family:JetBrains Mono;'>{pcr:.2f}</span>
+        <span class='{pcr_cls}' style='font-size:12px; margin-left:8px;'>{pcr_msg}</span>
+        </div>""", unsafe_allow_html=True)
+        st.caption(f"💡 **Max Pain** = 옵션 매도자(주로 기관)가 가장 이득인 가격으로, 만기일에 주가가 이쪽으로 끌려가는 경향. **콜 최대물량**({ccy}{opt['max_call_strike']:,.0f})은 저항선, **풋 최대물량**({ccy}{opt['max_put_strike']:,.0f})은 지지선 역할. 옵션 만기({opt['expiry']}) 전후 변동성 주의.")
 
     # ===== 목표가 계산식 =====
     st.markdown("<div class='section-h'>💰 AI 목표가 계산식</div>", unsafe_allow_html=True)
