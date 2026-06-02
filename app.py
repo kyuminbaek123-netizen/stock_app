@@ -843,38 +843,75 @@ def score_all(hist, info, patterns, macro, is_kr=False):
 
 # ============ AI 목표가 & 예측 곡선 ============
 def calc_target(hist, info, rec_score, top_pattern=None, market_score=50):
-    """목표가 계산
-    - 일봉 흔들림 방지: 현재가 대신 최근 5일 평균가(VWAP 유사) 기준
-    - 시장 점수 반영: 시장 좋으면 +5%, 나쁘면 -10%
+    """목표가 계산 (보수적 재설계)
+    - 기준점: 5일 평균가 (일봉 흔들림 방지)
+    - 기술적 목표: 52주 고점 또는 애널리스트 목표가 사용 (과도한 추정 X)
+    - 점수별 차등 상한: 매수 시그널만 +상승, 중립/매도는 제한적
     """
     curr = float(hist['Close'].iloc[-1])
-    # 5일 평균가 (분할매매 기준선) — 일봉 흔들림 흡수
     avg_5d = float(hist['Close'].iloc[-5:].mean()) if len(hist) >= 5 else curr
 
     high52 = float(hist['Close'].iloc[-252:].max()) if len(hist) >= 252 else float(hist['Close'].max())
     low52 = float(hist['Close'].iloc[-252:].min()) if len(hist) >= 252 else float(hist['Close'].min())
-    tech_t = high52 + (high52 - low52) * 0.5
     analyst_t = info.get('targetMeanPrice')
 
-    # 점수 보정 (50점=현재가, 80점이면 +30%, 20점이면 -30%)
-    score_mult = 1 + (rec_score - 50) / 100 * 0.8
-
-    # 시장 점수 보정 (보수적 - 영향 작게)
-    # 시장 75↑: +5%, 시장 30↓: -10%, 중립이면 변화 없음
-    if market_score >= 75: market_mult = 1.05
-    elif market_score >= 60: market_mult = 1.02
-    elif market_score >= 45: market_mult = 1.00
-    elif market_score >= 30: market_mult = 0.95
-    else: market_mult = 0.90
-
-    if analyst_t:
-        base = tech_t * 0.35 + analyst_t * 0.65
+    # === 기본 base 결정 (이전: 고점 + 범위*0.5로 너무 공격적이었음) ===
+    # 보수적: 애널리스트 있으면 그것 우선, 없으면 52주 고점의 1.1배까지만
+    if analyst_t and analyst_t > 0:
+        # 애널리스트 목표 + 52주 고점 평균 (애널리스트 가중치 高)
+        base = analyst_t * 0.7 + min(high52 * 1.05, analyst_t * 1.2) * 0.3
     else:
-        base = tech_t
+        # 애널리스트 데이터 없으면: 52주 고점 기준 +5% 정도까지만
+        base = high52 * 1.05
+
+    # === 점수별 차등 (보수적) ===
+    # 80점: +15%, 70점: +8%, 60점: +3%, 50점: 0%, 40점: -5%, 30점: -15%, 20점: -25%
+    if rec_score >= 75:
+        score_mult = 1.15
+    elif rec_score >= 65:
+        score_mult = 1.08
+    elif rec_score >= 55:
+        score_mult = 1.03
+    elif rec_score >= 45:
+        score_mult = 1.00  # 중립
+    elif rec_score >= 35:
+        score_mult = 0.95
+    elif rec_score >= 25:
+        score_mult = 0.85
+    else:
+        score_mult = 0.75
+
+    # 시장 점수 보정 (작게)
+    if market_score >= 75: market_mult = 1.03
+    elif market_score >= 60: market_mult = 1.01
+    elif market_score >= 45: market_mult = 1.00
+    elif market_score >= 30: market_mult = 0.97
+    else: market_mult = 0.93
 
     final = base * score_mult * market_mult
 
-    # 약세 패턴 + 낮은 점수 → 현재가 아래
+    # === 상한 캡: 점수별로 절대 넘으면 안 되는 한계 ===
+    # 매수 시그널이라도 6개월 +50% 이상은 비현실적
+    if rec_score >= 65:
+        cap = avg_5d * 1.50    # 매수: 최대 +50%
+    elif rec_score >= 50:
+        cap = avg_5d * 1.20    # 중립/관망: 최대 +20%
+    elif rec_score >= 35:
+        cap = avg_5d * 1.05    # 매도 약세: 최대 +5% (반등 한정)
+    else:
+        cap = avg_5d * 0.95    # 매도 강세: 현재가 아래
+
+    final = min(final, cap)
+
+    # === 하한 캡: 매수 시그널이면 너무 낮은 목표가 방지 ===
+    if rec_score >= 65:
+        floor = avg_5d * 1.05  # 매수면 최소 +5%
+        final = max(final, floor)
+    elif rec_score >= 50:
+        floor = avg_5d * 0.95  # 중립이면 최소 -5%
+        final = max(final, floor)
+
+    # 약세 패턴 + 낮은 점수
     if top_pattern and top_pattern.get("signal") == "약세" and top_pattern["score"] > 30:
         if rec_score < 45:
             final = min(final, avg_5d * (0.85 if rec_score < 35 else 0.92))
@@ -882,6 +919,9 @@ def calc_target(hist, info, rec_score, top_pattern=None, market_score=50):
     # 약세 추세에서 목표가 제한
     if top_pattern and top_pattern.get("trend") == "down" and rec_score < 55:
         final = min(final, avg_5d * 1.05)
+
+    # tech_t는 표시용으로만 유지 (사용자 참고)
+    tech_t = high52 * 1.05
 
     return {
         "current": curr, "avg_5d": avg_5d,
@@ -2474,11 +2514,10 @@ is_kr = ticker.endswith(".KS") or ticker.endswith(".KQ")
 ccy = "₩" if is_kr else "$"
 
 def integrate_stock_signals(rec, target, patterns, hist, ma_analysis, accu_avg, similar):
-    """종목 모든 분석 통합 - 차트패턴/이평선/세력매집/유사패턴/예측목표가
-    모두 같은 매수/매도/관망 결론으로 통일
+    """종목 모든 분석 통합
+    AI 종합 의견(rec.score)과 일치하는 5단계 판정 + 6개 지표 투표 참고
     """
     curr = float(hist['Close'].iloc[-1])
-    # 5개 분석에서 각각 한 표씩
     votes = {"매수": 0, "관망": 0, "매도": 0}
     details = []
 
@@ -2486,15 +2525,15 @@ def integrate_stock_signals(rec, target, patterns, hist, ma_analysis, accu_avg, 
     if rec["score"] >= 65:
         votes["매수"] += 1
         details.append(("AI 종합점수", f"{rec['score']:.0f}/100", "매수", "pos"))
-    elif rec["score"] >= 50:
+    elif rec["score"] >= 45:
         votes["관망"] += 1
         details.append(("AI 종합점수", f"{rec['score']:.0f}/100", "관망", "warn"))
     else:
         votes["매도"] += 1
         details.append(("AI 종합점수", f"{rec['score']:.0f}/100", "매도", "neg"))
 
-    # 2. 차트패턴 (top pattern)
-    if patterns and patterns[0]["score"] > 30:
+    # 2. 차트패턴 (임계값 완화 - score 20)
+    if patterns and patterns[0]["score"] > 20:
         p = patterns[0]
         sig = p.get("signal", "중립")
         if sig == "강세":
@@ -2510,40 +2549,41 @@ def integrate_stock_signals(rec, target, patterns, hist, ma_analysis, accu_avg, 
         votes["관망"] += 1
         details.append(("차트패턴", "박스권", "관망", "warn"))
 
-    # 3. 이평선 - timing 결과
+    # 3. 이평선 - timing + arrangement 같이 봄
     if ma_analysis:
         timing_name = ma_analysis.get("timing", ("관망", "warn", ""))[0]
+        arr_name = ma_analysis.get("arrangement", ("", "", ""))[0]
         if "매수" in timing_name and "준비" not in timing_name:
             votes["매수"] += 1
             details.append(("이평선 타이밍", timing_name, "매수", "pos"))
-        elif "매도" in timing_name:
+        elif "매도" in timing_name or "역배열" in arr_name:
             votes["매도"] += 1
-            details.append(("이평선 타이밍", timing_name, "매도", "neg"))
+            details.append(("이평선 타이밍", timing_name or arr_name, "매도", "neg"))
         else:
             votes["관망"] += 1
             details.append(("이평선 타이밍", timing_name, "관망", "warn"))
     else:
         details.append(("이평선 타이밍", "데이터 부족", "관망", "warn"))
 
-    # 4. 세력 매집 (OBV/POC/VCP 평균)
-    if accu_avg >= 60:
+    # 4. 세력 매집 (임계값 완화)
+    if accu_avg >= 55:
         votes["매수"] += 1
         details.append(("세력 매집", f"종합 {accu_avg:.0f}점", "매수", "pos"))
-    elif accu_avg <= 40:
+    elif accu_avg <= 45:
         votes["매도"] += 1
         details.append(("세력 매집", f"종합 {accu_avg:.0f}점", "매도", "neg"))
     else:
         votes["관망"] += 1
         details.append(("세력 매집", f"종합 {accu_avg:.0f}점", "관망", "warn"))
 
-    # 5. 유사패턴 (10일 후 통계)
+    # 5. 유사패턴 (임계값 완화)
     if similar and 10 in similar.get("stats", {}):
         wr = similar["stats"][10]["win_rate"]
         avg = similar["stats"][10]["avg"]
-        if wr >= 70 and avg > 2:
+        if wr >= 60 and avg > 1:
             votes["매수"] += 1
             details.append(("유사패턴 통계", f"승률 {wr:.0f}% · 평균 {avg:+.1f}%", "매수", "pos"))
-        elif wr <= 30 and avg < -2:
+        elif wr <= 40 or avg < -1:
             votes["매도"] += 1
             details.append(("유사패턴 통계", f"승률 {wr:.0f}% · 평균 {avg:+.1f}%", "매도", "neg"))
         else:
@@ -2554,10 +2594,10 @@ def integrate_stock_signals(rec, target, patterns, hist, ma_analysis, accu_avg, 
 
     # 6. AI 6개월 목표가
     upside = target["upside"]
-    if upside > 10:
+    if upside > 8:
         votes["매수"] += 1
         details.append(("AI 6개월 목표가", f"{upside:+.1f}% 상승여력", "매수", "pos"))
-    elif upside < -5:
+    elif upside < -3:
         votes["매도"] += 1
         details.append(("AI 6개월 목표가", f"{upside:+.1f}% 하락전망", "매도", "neg"))
     else:
@@ -2569,21 +2609,29 @@ def integrate_stock_signals(rec, target, patterns, hist, ma_analysis, accu_avg, 
     hold_pct = votes["관망"] / total * 100
     sell_pct = votes["매도"] / total * 100
 
-    # 최종 결론
-    if buy_pct >= 60:
-        verdict = ("🟢 매수 우위", "pos", f"6개 지표 중 {votes['매수']}개 매수 신호 - 일관된 강세")
-    elif sell_pct >= 60:
-        verdict = ("🔴 매도 우위", "neg", f"6개 지표 중 {votes['매도']}개 매도 신호 - 일관된 약세")
-    elif buy_pct >= 40 and sell_pct <= 20:
-        verdict = ("🟡 매수 약우위", "warn", f"매수 {votes['매수']}/관망 {votes['관망']}/매도 {votes['매도']} - 분할 진입 고려")
-    elif sell_pct >= 40 and buy_pct <= 20:
-        verdict = ("🟠 매도 약우위", "warn", f"매수 {votes['매수']}/관망 {votes['관망']}/매도 {votes['매도']} - 비중 축소 고려")
+    # === 최종 결론: AI 종합 점수(rec.score)와 같은 5단계 + 투표 결과 보정 ===
+    score = rec["score"]
+    # 투표 결과를 점수에 ±소폭 반영 (강한 합의면 강화)
+    if buy_pct >= 60: score += 5
+    elif sell_pct >= 60: score -= 5
+    elif sell_pct >= 40 and buy_pct < 30: score -= 3
+    elif buy_pct >= 40 and sell_pct < 30: score += 3
+
+    if score >= 75:
+        verdict = ("🟢 적극 매수", "pos", f"6개 지표 중 {votes['매수']}개 매수 · 강한 합의")
+    elif score >= 65:
+        verdict = ("🟢 매수", "pos", f"매수 {votes['매수']}/관망 {votes['관망']}/매도 {votes['매도']}")
+    elif score >= 45:
+        verdict = ("🟡 중립 / 관망", "warn", f"매수 {votes['매수']}/관망 {votes['관망']}/매도 {votes['매도']}")
+    elif score >= 35:
+        verdict = ("🔴 매도", "neg", f"매수 {votes['매수']}/관망 {votes['관망']}/매도 {votes['매도']}")
     else:
-        verdict = ("⚪ 신호 혼조", "warn", f"매수 {votes['매수']}/관망 {votes['관망']}/매도 {votes['매도']} - 명확한 신호 없음")
+        verdict = ("🔴 적극 매도", "neg", f"6개 지표 중 {votes['매도']}개 매도 · 강한 약세")
 
     return {
         "votes": votes, "details": details, "verdict": verdict,
         "buy_pct": buy_pct, "hold_pct": hold_pct, "sell_pct": sell_pct,
+        "final_score": score,
     }
 
 
