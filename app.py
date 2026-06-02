@@ -2470,6 +2470,93 @@ if not ticker:
 is_kr = ticker.endswith(".KS") or ticker.endswith(".KQ")
 ccy = "₩" if is_kr else "$"
 
+def topdown_analysis(macro, mkt, sectors, ticker, info, rec_score):
+    """탑다운 4단계 자동 분석"""
+    us10y = macro.get("us10y", (None, None))[0]
+    rr = macro.get("real_rate", (None, None))[0]
+    dxy = macro.get("dxy", (None, None))[0]
+    fa = macro.get("fed_assets", (None, None))
+    cpi = macro.get("cpi_yoy_v", (None, None))[0]
+
+    # 1단계: 거시
+    macro_signals = []
+    if us10y and dxy:
+        if us10y > 4.5 and dxy > 105:
+            macro_signals.append(("고금리·강달러", "neg", "신흥국·원자재 불리, 美 빅테크 부담"))
+        elif us10y < 3.5 and dxy < 100:
+            macro_signals.append(("저금리·약달러", "pos", "신흥국·원자재·위험자산 우호"))
+        elif dxy < 100:
+            macro_signals.append(("약달러 환경", "pos", "신흥국·금·원자재 유리"))
+        else:
+            macro_signals.append(("중립 환경", "warn", "방향성 모호"))
+    if mkt["score"] >= 65 and cpi and cpi > 3:
+        cycle = ("후기 사이클 (Late Cycle)", "warn", "성장 정점 + 인플레 압력 - 에너지/원자재/금융 우위")
+    elif mkt["score"] >= 65:
+        cycle = ("확장 국면 (Expansion)", "pos", "성장주·기술주·소비재 우위")
+    elif mkt["score"] >= 45:
+        cycle = ("혼조 구간", "warn", "방어주·고배당주 검토")
+    else:
+        cycle = ("수축/침체 (Contraction)", "neg", "필수소비재·유틸리티·헬스케어·국채 우위")
+    if fa[0] and fa[1]:
+        if fa[0] > fa[1]: liq_dir = ("유동성 확장 중", "pos", "Fed 자산 증가 - 위험자산 우호")
+        else: liq_dir = ("유동성 축소 (QT)", "neg", "Fed 자산 감소 - 점진적 부담")
+    else:
+        liq_dir = ("데이터 부족", "warn", "")
+    if rr:
+        if rr > 2.5: real_sig = ("고실질금리", "neg", f"{rr:.2f}% - 성장주 밸류 부담")
+        elif rr < 1: real_sig = ("저실질금리", "pos", f"{rr:.2f}% - 위험자산 우호")
+        else: real_sig = ("중립 실질금리", "warn", f"{rr:.2f}%")
+    else:
+        real_sig = None
+
+    # 2단계: 섹터
+    sector_top = sectors[:3] if sectors else []
+    sector_bot = sectors[-3:] if sectors else []
+    structural_themes = {
+        "에너지": "유가 변동성, OPEC+ 감산, 인플레 헤지",
+        "반도체": "AI 데이터센터, 공급 제한 (TSMC·삼성 과점)",
+        "원자력/SMR": "AI 전력 폭발 수요, 탈탄소 정책",
+        "우주항공/방산": "지정학 긴장, 국방 예산 확대",
+        "기술": "AI 인프라 + 빅테크 EPS 성장",
+        "금융": "고금리 수혜, NIM 확대",
+        "유틸리티": "전력 수요, 방어주",
+        "헬스케어": "고령화, 방어주",
+        "신흥국": "달러 약세시 자금 유입",
+    }
+
+    # 3단계: 종목 (병목)
+    mcap = info.get("marketCap", 0) or 0
+    if mcap > 1e12:
+        position = ("대장주 (메가캡)", "pos", "ETF 자동 편입 + 기관 자금 지속 유입")
+    elif mcap > 1e11:
+        position = ("리더 (대형주)", "pos", "시장 주도, 기관 비중 높음")
+    elif mcap > 1e10:
+        position = ("주요 플레이어", "warn", "성장 여력 있으나 변동성 큼")
+    elif mcap > 1e9:
+        position = ("중형주", "warn", "급등락 가능")
+    else:
+        position = ("소형주", "neg", "유동성 부족, 변동성 매우 큼")
+
+    # 4단계: 타이밍
+    if rec_score >= 65:
+        timing = ("🟢 진입 적기", "pos", "AI 점수 高 - 분할 매수 권장")
+    elif rec_score >= 50:
+        timing = ("🟡 분할 진입 고려", "warn", "AI 점수 중립 - 일부 비중만")
+    elif rec_score >= 35:
+        timing = ("🟠 관망", "warn", "AI 점수 낮음 - 신규 진입 보류")
+    else:
+        timing = ("🔴 진입 부적합", "neg", "AI 점수 매우 낮음")
+
+    return {
+        "macro_signals": macro_signals, "cycle": cycle, "liq_dir": liq_dir,
+        "real_sig": real_sig, "sector_top": sector_top, "sector_bot": sector_bot,
+        "structural_themes": structural_themes,
+        "stock_sector": info.get("sector", ""),
+        "industry": info.get("industry", ""),
+        "position": position, "timing": timing,
+    }
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def get_option_chain(ticker):
     """가장 가까운 만기의 옵션 체인 분석
@@ -2929,6 +3016,121 @@ try:
         <span style='color:#9ca3af; font-size:12px;'>최약</span>
         <span class='neg' style='font-weight:700; margin-left:4px;'>{loser["name"]} {loser["month"]:+.2f}%</span>
         </div>""", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ===== 탑다운 4단계 투자 흐름 =====
+    td = topdown_analysis(macro, mkt, sectors, ticker, info, rec["score"])
+
+    st.markdown("<div class='section-h'>🧭 탑다운 4단계 흐름 <span style='color:#6b7280; font-weight:400; font-size:11px; margin-left:8px;'>· 거시 → 섹터 → 종목 → 타이밍</span></div>", unsafe_allow_html=True)
+
+    # 1단계: 거시
+    macro_html = ""
+    for label, cls, desc in td["macro_signals"]:
+        macro_html += f"<div style='display:inline-block; margin:3px 6px 3px 0; padding:4px 10px; background:#0a0c12; border-radius:5px; border:1px solid #1c1f26;'><span class='{cls}' style='font-weight:700; font-size:12px;'>{label}</span> <span style='color:#9ca3af; font-size:11px;'>· {desc}</span></div>"
+    cyc_name, cyc_cls, cyc_desc = td["cycle"]
+    liq_name, liq_cls, liq_desc = td["liq_dir"]
+    real_html = ""
+    if td["real_sig"]:
+        rn, rc, rd = td["real_sig"]
+        real_html = f"<div style='margin-top:6px;'><span class='{rc}' style='font-weight:700; font-size:12px;'>{rn}</span> <span style='color:#9ca3af; font-size:11px;'>· {rd}</span></div>"
+
+    st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid #60a5fa; margin-bottom:10px;'>
+    <div style='display:flex; gap:14px; align-items:center; margin-bottom:10px;'>
+    <span style='background:#1e3a8a; color:#fff; padding:4px 10px; border-radius:4px; font-size:11px; font-weight:700; letter-spacing:0.1em;'>STEP 1</span>
+    <span style='font-size:15px; font-weight:800; color:#fafafa;'>🗺️ 거시 (지도 읽기)</span>
+    <span style='color:#9ca3af; font-size:11px;'>돈이 어디로 흐르는가</span>
+    </div>
+    <div style='margin-bottom:8px;'>{macro_html}</div>
+    <div style='padding:10px 12px; background:#0a0c12; border-radius:6px;'>
+    <span class='{cyc_cls}' style='font-weight:700; font-size:13px;'>🔄 {cyc_name}</span>
+    <span style='color:#cbd5e1; font-size:12px; margin-left:8px;'>{cyc_desc}</span>
+    <div style='margin-top:6px;'><span class='{liq_cls}' style='font-weight:700; font-size:12px;'>💧 {liq_name}</span> <span style='color:#9ca3af; font-size:11px;'>· {liq_desc}</span></div>
+    {real_html}
+    </div>
+    </div>""", unsafe_allow_html=True)
+
+    # 2단계: 섹터
+    if td["sector_top"]:
+        top_sectors_html = " · ".join(
+            f"<span class='pos' style='font-weight:700;'>{s['name']} {s['month']:+.1f}%</span>" for s in td["sector_top"]
+        )
+        bot_sectors_html = " · ".join(
+            f"<span class='neg' style='font-weight:700;'>{s['name']} {s['month']:+.1f}%</span>" for s in td["sector_bot"]
+        )
+        # 강한 섹터 중 구조적 테마가 있는 것
+        structural_html = ""
+        for s in td["sector_top"]:
+            if s["name"] in td["structural_themes"]:
+                structural_html += f"<div style='padding:8px 12px; background:#0a1a13; border-left:2px solid #4ade80; border-radius:4px; margin:5px 0;'><span class='pos' style='font-weight:700; font-size:12px;'>★ {s['name']}</span> <span style='color:#cbd5e1; font-size:11px;'>· {td['structural_themes'][s['name']]}</span></div>"
+
+        st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid #4ade80; margin-bottom:10px;'>
+        <div style='display:flex; gap:14px; align-items:center; margin-bottom:10px;'>
+        <span style='background:#15803d; color:#fff; padding:4px 10px; border-radius:4px; font-size:11px; font-weight:700; letter-spacing:0.1em;'>STEP 2</span>
+        <span style='font-size:15px; font-weight:800; color:#fafafa;'>🎯 강한 섹터 (방향에 올라타기)</span>
+        <span style='color:#9ca3af; font-size:11px;'>구조적 수혜 섹터</span>
+        </div>
+        <div style='padding:8px 12px; background:#0a0c12; border-radius:5px; margin-bottom:6px;'>
+        <span style='color:#9ca3af; font-size:11px; font-weight:600;'>🔥 자금 유입 TOP 3 · </span>{top_sectors_html}
+        </div>
+        <div style='padding:8px 12px; background:#0a0c12; border-radius:5px; margin-bottom:8px;'>
+        <span style='color:#9ca3af; font-size:11px; font-weight:600;'>❄️ 자금 유출 · </span>{bot_sectors_html}
+        </div>
+        {structural_html if structural_html else "<div style='color:#6b7280; font-size:11px;'>현재 자금이 유입되는 섹터 중 구조적 수혜 테마 없음 - 단기 모멘텀일 가능성</div>"}
+        </div>""", unsafe_allow_html=True)
+
+    # 3단계: 종목 (병목)
+    pos_name, pos_cls, pos_desc = td["position"]
+    sector_match = ""
+    # 종목 섹터가 강한 섹터 TOP3에 있나?
+    if td["sector_top"] and td["stock_sector"]:
+        stock_sec_lower = td["stock_sector"].lower()
+        top_names = " ".join(s["name"] for s in td["sector_top"]).lower()
+        # GICS 영문 ↔ 한글 매칭
+        sec_map = {
+            "technology": "기술", "energy": "에너지", "financial": "금융",
+            "healthcare": "헬스케어", "industrials": "산업재", "utilities": "유틸리티",
+            "consumer": "소비재", "communication": "통신", "real estate": "부동산",
+            "basic materials": "소재",
+        }
+        ko_sector = None
+        for en, ko in sec_map.items():
+            if en in stock_sec_lower:
+                ko_sector = ko; break
+        if ko_sector and ko_sector in top_names:
+            sector_match = f"<div style='padding:8px 12px; background:#0a1a13; border-left:2px solid #4ade80; border-radius:4px; margin-top:8px;'><span class='pos' style='font-weight:700; font-size:12px;'>✓ 강한 섹터 흐름 일치</span> <span style='color:#cbd5e1; font-size:11px;'>· 종목 섹터({td['stock_sector']})가 TOP3 자금유입 섹터와 일치 - 방향에 올라탐</span></div>"
+        elif ko_sector:
+            sector_match = f"<div style='padding:8px 12px; background:#1a0e0e; border-left:2px solid #f87171; border-radius:4px; margin-top:8px;'><span class='neg' style='font-weight:700; font-size:12px;'>⚠ 섹터 흐름 불일치</span> <span style='color:#cbd5e1; font-size:11px;'>· 종목 섹터({td['stock_sector']})가 자금유입 TOP3에 없음 - 역풍 가능</span></div>"
+
+    st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid #fbbf24; margin-bottom:10px;'>
+    <div style='display:flex; gap:14px; align-items:center; margin-bottom:10px;'>
+    <span style='background:#a16207; color:#fff; padding:4px 10px; border-radius:4px; font-size:11px; font-weight:700; letter-spacing:0.1em;'>STEP 3</span>
+    <span style='font-size:15px; font-weight:800; color:#fafafa;'>🏢 종목 위치 (병목 장악)</span>
+    <span style='color:#9ca3af; font-size:11px;'>이 기업이 가진 자리</span>
+    </div>
+    <div style='padding:8px 12px; background:#0a0c12; border-radius:5px;'>
+    <span style='color:#9ca3af; font-size:11px;'>섹터: <b style='color:#d1d5db;'>{td['stock_sector'] or 'N/A'}</b> · 산업: <b style='color:#d1d5db;'>{td['industry'] or 'N/A'}</b></span>
+    <div style='margin-top:6px;'><span class='{pos_cls}' style='font-weight:700; font-size:13px;'>📊 {pos_name}</span> <span style='color:#9ca3af; font-size:11px;'>· {pos_desc}</span></div>
+    </div>
+    {sector_match}
+    </div>""", unsafe_allow_html=True)
+
+    # 4단계: 타이밍
+    tim_name, tim_cls, tim_desc = td["timing"]
+    st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid {"#4ade80" if tim_cls=="pos" else "#fbbf24" if tim_cls=="warn" else "#f87171"};'>
+    <div style='display:flex; gap:14px; align-items:center; margin-bottom:10px;'>
+    <span style='background:#7c2d12; color:#fff; padding:4px 10px; border-radius:4px; font-size:11px; font-weight:700; letter-spacing:0.1em;'>STEP 4</span>
+    <span style='font-size:15px; font-weight:800; color:#fafafa;'>⏱️ 진입 타이밍</span>
+    <span style='color:#9ca3af; font-size:11px;'>차트·수급으로 결정</span>
+    </div>
+    <div style='padding:10px 12px; background:#0a0c12; border-radius:5px;'>
+    <span class='{tim_cls}' style='font-weight:800; font-size:16px;'>{tim_name}</span>
+    <span style='color:#cbd5e1; font-size:12px; margin-left:8px;'>· {tim_desc}</span>
+    <div style='color:#6b7280; font-size:11px; margin-top:6px;'>AI 종합점수: {rec["score"]:.1f}/100 · 아래 종목 상세 분석 참고</div>
+    </div>
+    </div>""", unsafe_allow_html=True)
+
+    st.caption("💡 거시(돈의 흐름) → 섹터(구조적 수혜) → 종목(병목) → 타이밍 순서로 좁혀가면 개인 투자자에게 가장 현실적이고 승률이 높습니다.")
 
     st.markdown("---")
 
