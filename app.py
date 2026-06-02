@@ -2499,16 +2499,67 @@ st.markdown(f"""<div style='background:linear-gradient(135deg, #0f1117, #0a0c12)
 <div style='font-size:12px; color:#9ca3af; margin-top:6px; text-align:right;'>— {_q[1]}</div>
 </div>""", unsafe_allow_html=True)
 
+import json
+import os as _os
+
+# === 검색 기록 (1주일 자동 삭제) ===
+HISTORY_FILE = "search_history.json"
+
+def load_history():
+    try:
+        if _os.path.exists(HISTORY_FILE):
+            with open(HISTORY_FILE, "r") as f:
+                data = json.load(f)
+            # 1주일 지난 거 삭제
+            now = datetime.now().timestamp()
+            week = 7 * 24 * 3600
+            data = {tk: ts for tk, ts in data.items() if now - ts < week}
+            return data
+    except Exception: pass
+    return {}
+
+def save_history(tk):
+    try:
+        data = load_history()
+        data[tk] = datetime.now().timestamp()
+        with open(HISTORY_FILE, "w") as f:
+            json.dump(data, f)
+    except Exception: pass
+
+history = load_history()
+# 최근 검색순 정렬
+history_sorted = sorted(history.items(), key=lambda x: x[1], reverse=True)
+
 with st.form("f"):
     c1, c2 = st.columns([5, 1])
     with c1:
         ticker = st.text_input("티커 입력 (미국: TSLA, NVDA · 한국: 005930.KS, 035420.KS)",
-                                value="TSLA", label_visibility="collapsed").upper().strip()
+                                value=history_sorted[0][0] if history_sorted else "TSLA",
+                                label_visibility="collapsed").upper().strip()
     with c2:
         go_btn = st.form_submit_button("분석 실행")
 
+# 최근 검색 버튼 (있을 때만)
+if history_sorted:
+    st.markdown("<div style='font-size:11px; color:#6b7280; font-weight:600; margin:8px 0 6px 0; letter-spacing:0.05em;'>🕐 최근 검색 · 1주일 보관</div>", unsafe_allow_html=True)
+    hist_cols = st.columns(min(len(history_sorted), 8))
+    for i, (tk, ts) in enumerate(history_sorted[:8]):
+        days_ago = (datetime.now().timestamp() - ts) / 86400
+        if days_ago < 1: time_label = "오늘"
+        elif days_ago < 2: time_label = "어제"
+        else: time_label = f"{int(days_ago)}일 전"
+        with hist_cols[i]:
+            if st.button(f"{tk}\n{time_label}", key=f"hist_{tk}", use_container_width=True):
+                ticker = tk
+                save_history(tk)
+                st.rerun()
+
 if not ticker:
     st.stop()
+
+# 분석 버튼 누른 경우 기록 저장
+if go_btn:
+    save_history(ticker)
 
 is_kr = ticker.endswith(".KS") or ticker.endswith(".KQ")
 ccy = "₩" if is_kr else "$"
