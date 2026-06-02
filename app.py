@@ -226,20 +226,23 @@ def fred_yoy(series_id):
 
 @st.cache_data(ttl=3600)
 def fred_get(series_id):
-    """FRED 시리즈 최신값 가져오기"""
-    try:
-        url = f"https://api.stlouisfed.org/fred/series/observations"
-        params = {"series_id": series_id, "api_key": FRED_API_KEY, "file_type": "json",
-                  "sort_order": "desc", "limit": 2}
-        r = requests.get(url, params=params, timeout=8)
-        if r.status_code == 200:
-            obs = r.json().get("observations", [])
-            if len(obs) >= 2:
-                cur = float(obs[0]["value"]) if obs[0]["value"] != "." else None
-                prev = float(obs[1]["value"]) if obs[1]["value"] != "." else None
-                return cur, prev
-    except Exception:
-        pass
+    """FRED 시리즈 최신값 (재시도 + null 건너뛰기)"""
+    for attempt in range(3):
+        try:
+            url = "https://api.stlouisfed.org/fred/series/observations"
+            params = {"series_id": series_id, "api_key": FRED_API_KEY, "file_type": "json",
+                      "sort_order": "desc", "limit": 10}  # 10개 받아서 null 건너뜀
+            r = requests.get(url, params=params, timeout=10)
+            if r.status_code == 200:
+                obs = r.json().get("observations", [])
+                vals = [float(o["value"]) for o in obs if o["value"] != "."]
+                if len(vals) >= 2:
+                    return vals[0], vals[1]
+                elif len(vals) == 1:
+                    return vals[0], vals[0]
+        except Exception:
+            pass
+        _time.sleep(1)
     return None, None
 
 
@@ -2470,6 +2473,120 @@ if not ticker:
 is_kr = ticker.endswith(".KS") or ticker.endswith(".KQ")
 ccy = "₩" if is_kr else "$"
 
+def integrate_stock_signals(rec, target, patterns, hist, ma_analysis, accu_avg, similar):
+    """종목 모든 분석 통합 - 차트패턴/이평선/세력매집/유사패턴/예측목표가
+    모두 같은 매수/매도/관망 결론으로 통일
+    """
+    curr = float(hist['Close'].iloc[-1])
+    # 5개 분석에서 각각 한 표씩
+    votes = {"매수": 0, "관망": 0, "매도": 0}
+    details = []
+
+    # 1. AI 종합 점수
+    if rec["score"] >= 65:
+        votes["매수"] += 1
+        details.append(("AI 종합점수", f"{rec['score']:.0f}/100", "매수", "pos"))
+    elif rec["score"] >= 50:
+        votes["관망"] += 1
+        details.append(("AI 종합점수", f"{rec['score']:.0f}/100", "관망", "warn"))
+    else:
+        votes["매도"] += 1
+        details.append(("AI 종합점수", f"{rec['score']:.0f}/100", "매도", "neg"))
+
+    # 2. 차트패턴 (top pattern)
+    if patterns and patterns[0]["score"] > 30:
+        p = patterns[0]
+        sig = p.get("signal", "중립")
+        if sig == "강세":
+            votes["매수"] += 1
+            details.append(("차트패턴", p["name"], "매수", "pos"))
+        elif sig == "약세":
+            votes["매도"] += 1
+            details.append(("차트패턴", p["name"], "매도", "neg"))
+        else:
+            votes["관망"] += 1
+            details.append(("차트패턴", p["name"], "관망", "warn"))
+    else:
+        votes["관망"] += 1
+        details.append(("차트패턴", "박스권", "관망", "warn"))
+
+    # 3. 이평선 - timing 결과
+    if ma_analysis:
+        timing_name = ma_analysis.get("timing", ("관망", "warn", ""))[0]
+        if "매수" in timing_name and "준비" not in timing_name:
+            votes["매수"] += 1
+            details.append(("이평선 타이밍", timing_name, "매수", "pos"))
+        elif "매도" in timing_name:
+            votes["매도"] += 1
+            details.append(("이평선 타이밍", timing_name, "매도", "neg"))
+        else:
+            votes["관망"] += 1
+            details.append(("이평선 타이밍", timing_name, "관망", "warn"))
+    else:
+        details.append(("이평선 타이밍", "데이터 부족", "관망", "warn"))
+
+    # 4. 세력 매집 (OBV/POC/VCP 평균)
+    if accu_avg >= 60:
+        votes["매수"] += 1
+        details.append(("세력 매집", f"종합 {accu_avg:.0f}점", "매수", "pos"))
+    elif accu_avg <= 40:
+        votes["매도"] += 1
+        details.append(("세력 매집", f"종합 {accu_avg:.0f}점", "매도", "neg"))
+    else:
+        votes["관망"] += 1
+        details.append(("세력 매집", f"종합 {accu_avg:.0f}점", "관망", "warn"))
+
+    # 5. 유사패턴 (10일 후 통계)
+    if similar and 10 in similar.get("stats", {}):
+        wr = similar["stats"][10]["win_rate"]
+        avg = similar["stats"][10]["avg"]
+        if wr >= 70 and avg > 2:
+            votes["매수"] += 1
+            details.append(("유사패턴 통계", f"승률 {wr:.0f}% · 평균 {avg:+.1f}%", "매수", "pos"))
+        elif wr <= 30 and avg < -2:
+            votes["매도"] += 1
+            details.append(("유사패턴 통계", f"승률 {wr:.0f}% · 평균 {avg:+.1f}%", "매도", "neg"))
+        else:
+            votes["관망"] += 1
+            details.append(("유사패턴 통계", f"승률 {wr:.0f}% · 평균 {avg:+.1f}%", "관망", "warn"))
+    else:
+        details.append(("유사패턴 통계", "데이터 부족", "관망", "warn"))
+
+    # 6. AI 6개월 목표가
+    upside = target["upside"]
+    if upside > 10:
+        votes["매수"] += 1
+        details.append(("AI 6개월 목표가", f"{upside:+.1f}% 상승여력", "매수", "pos"))
+    elif upside < -5:
+        votes["매도"] += 1
+        details.append(("AI 6개월 목표가", f"{upside:+.1f}% 하락전망", "매도", "neg"))
+    else:
+        votes["관망"] += 1
+        details.append(("AI 6개월 목표가", f"{upside:+.1f}% 제한적", "관망", "warn"))
+
+    total = sum(votes.values())
+    buy_pct = votes["매수"] / total * 100
+    hold_pct = votes["관망"] / total * 100
+    sell_pct = votes["매도"] / total * 100
+
+    # 최종 결론
+    if buy_pct >= 60:
+        verdict = ("🟢 매수 우위", "pos", f"6개 지표 중 {votes['매수']}개 매수 신호 - 일관된 강세")
+    elif sell_pct >= 60:
+        verdict = ("🔴 매도 우위", "neg", f"6개 지표 중 {votes['매도']}개 매도 신호 - 일관된 약세")
+    elif buy_pct >= 40 and sell_pct <= 20:
+        verdict = ("🟡 매수 약우위", "warn", f"매수 {votes['매수']}/관망 {votes['관망']}/매도 {votes['매도']} - 분할 진입 고려")
+    elif sell_pct >= 40 and buy_pct <= 20:
+        verdict = ("🟠 매도 약우위", "warn", f"매수 {votes['매수']}/관망 {votes['관망']}/매도 {votes['매도']} - 비중 축소 고려")
+    else:
+        verdict = ("⚪ 신호 혼조", "warn", f"매수 {votes['매수']}/관망 {votes['관망']}/매도 {votes['매도']} - 명확한 신호 없음")
+
+    return {
+        "votes": votes, "details": details, "verdict": verdict,
+        "buy_pct": buy_pct, "hold_pct": hold_pct, "sell_pct": sell_pct,
+    }
+
+
 def topdown_analysis(macro, mkt, sectors, ticker, info, rec_score):
     """탑다운 4단계 자동 분석"""
     us10y = macro.get("us10y", (None, None))[0]
@@ -2877,149 +2994,11 @@ try:
     </div>
     </div>""", unsafe_allow_html=True)
 
-    # ===== 섹터별 자금 흐름 (방사형 마인드맵) =====
-    st.markdown("<div class='section-h'>💸 섹터별 자금 흐름 <span style='color:#6b7280; font-weight:400; font-size:11px; margin-left:8px;'>· 1개월 등락률 · 15개 섹터 ETF</span></div>", unsafe_allow_html=True)
-
-    with st.spinner("섹터 분석 중..."):
-        sectors = get_sector_flow()
-
-    if sectors:
-        import math
-        n = len(sectors)
-
-        # 노드 좌표 계산 (방사형)
-        fig_map = go.Figure()
-
-        # 선 (중앙 → 각 섹터) 먼저 그리기
-        line_traces_in = {"x": [], "y": []}
-        line_traces_out = {"x": [], "y": []}
-
-        node_x, node_y, node_text, node_color, node_size = [], [], [], [], []
-
-        # 중앙 노드
-        node_x.append(0); node_y.append(0)
-        node_text.append("<b>자금 흐름</b><br>Sector Rotation")
-        node_color.append("#fafafa"); node_size.append(75)
-
-        # 섹터 노드들 방사형 배치
-        for i, s in enumerate(sectors):
-            angle = 2 * math.pi * i / n - math.pi / 2  # 12시부터 시계방향
-            radius = 1.0
-            x = math.cos(angle) * radius
-            y = math.sin(angle) * radius
-
-            # 라벨 위치는 노드보다 살짝 바깥
-            label_r = 1.25
-            lx = math.cos(angle) * label_r
-            ly = math.sin(angle) * label_r
-
-            node_x.append(x); node_y.append(y)
-            node_text.append(f"<b>{s['name']}</b><br><span style='font-family:monospace; font-size:12px;'>{s['month']:+.2f}%</span>")
-
-            # 색상 (월 등락률 기준)
-            v = s['month']
-            if v > 10: c = "#15803d"      # 강한 유입
-            elif v > 5: c = "#22c55e"
-            elif v > 0: c = "#4ade80"
-            elif v > -5: c = "#f87171"
-            elif v > -10: c = "#ef4444"
-            else: c = "#991b1b"           # 강한 유출
-            node_color.append(c)
-            # 크기는 절댓값 기준
-            node_size.append(30 + min(abs(v) * 2.5, 35))
-
-            # 선 (유입은 녹색, 유출은 빨강)
-            if v > 0:
-                line_traces_in["x"].extend([0, x, None])
-                line_traces_in["y"].extend([0, y, None])
-            else:
-                line_traces_out["x"].extend([0, x, None])
-                line_traces_out["y"].extend([0, y, None])
-
-        # 유입 선 (녹색)
-        if line_traces_in["x"]:
-            fig_map.add_trace(go.Scatter(
-                x=line_traces_in["x"], y=line_traces_in["y"],
-                mode='lines', line=dict(color='rgba(74, 222, 128, 0.35)', width=1.5),
-                hoverinfo='skip', showlegend=False
-            ))
-        # 유출 선 (빨강)
-        if line_traces_out["x"]:
-            fig_map.add_trace(go.Scatter(
-                x=line_traces_out["x"], y=line_traces_out["y"],
-                mode='lines', line=dict(color='rgba(248, 113, 113, 0.35)', width=1.5),
-                hoverinfo='skip', showlegend=False
-            ))
-
-        # 노드 (원)
-        fig_map.add_trace(go.Scatter(
-            x=node_x, y=node_y, mode='markers',
-            marker=dict(size=node_size, color=node_color,
-                        line=dict(color='#0a0e1a', width=2)),
-            hoverinfo='text', hovertext=node_text,
-            showlegend=False
-        ))
-
-        # 노드 라벨 (섹터명 + 등락률)
-        for i, s in enumerate(sectors):
-            angle = 2 * math.pi * i / n - math.pi / 2
-            # 노드 크기에 따라 라벨 거리 조정
-            r = 1.0 + (node_size[i+1] / 200) + 0.13
-            lx = math.cos(angle) * r
-            ly = math.sin(angle) * r
-
-            v = s['month']
-            v_color = "#4ade80" if v > 0 else "#f87171"
-            sign = "+" if v > 0 else ""
-
-            fig_map.add_annotation(
-                x=lx, y=ly,
-                text=f"<b style='color:#fafafa'>{s['name']}</b><br><span style='color:{v_color}; font-family:JetBrains Mono;'>{sign}{v:.2f}%</span>",
-                showarrow=False,
-                font=dict(size=11, family="Inter, JetBrains Mono"),
-                xanchor='center', yanchor='middle'
-            )
-
-        # 중앙 라벨
-        fig_map.add_annotation(
-            x=0, y=0,
-            text="<b style='color:#08090d; font-size:13px;'>CAPITAL<br>FLOWS</b>",
-            showarrow=False,
-            font=dict(size=12, family="Inter"),
-            xanchor='center', yanchor='middle'
-        )
-
-        fig_map.update_layout(
-            height=620, margin=dict(l=20, r=20, t=20, b=20),
-            plot_bgcolor='#08090d', paper_bgcolor='#08090d',
-            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
-                       range=[-1.7, 1.7]),
-            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
-                       range=[-1.6, 1.6], scaleanchor="x", scaleratio=1),
-            showlegend=False, hovermode='closest'
-        )
-        st.plotly_chart(fig_map, use_container_width=True)
-
-        # 요약
-        inflow = [s for s in sectors if s["month"] > 0]
-        outflow = [s for s in sectors if s["month"] <= 0]
-        winner = sectors[0]
-        loser = sectors[-1]
-        st.markdown(f"""<div class='card' style='padding:14px 18px; margin-top:-6px;'>
-        <span class='pos' style='font-weight:700; font-size:13px;'>유입 우세 {len(inflow)}↑</span>
-        <span style='color:#6b7280; margin:0 6px;'>·</span>
-        <span class='neg' style='font-weight:700; font-size:13px;'>유출 {len(outflow)}↓</span>
-        <span style='color:#6b7280; margin:0 10px;'>—</span>
-        <span style='color:#9ca3af; font-size:12px;'>최강</span>
-        <span class='pos' style='font-weight:700; margin-left:4px;'>{winner["name"]} {winner["month"]:+.2f}%</span>
-        <span style='color:#6b7280; margin:0 6px;'>·</span>
-        <span style='color:#9ca3af; font-size:12px;'>최약</span>
-        <span class='neg' style='font-weight:700; margin-left:4px;'>{loser["name"]} {loser["month"]:+.2f}%</span>
-        </div>""", unsafe_allow_html=True)
 
     st.markdown("---")
 
     # ===== 탑다운 4단계 투자 흐름 =====
+    sectors = get_sector_flow()  # 섹터 데이터 (탑다운에서 사용)
     td = topdown_analysis(macro, mkt, sectors, ticker, info, rec["score"])
 
     st.markdown("<div class='section-h'>🧭 탑다운 4단계 흐름 <span style='color:#6b7280; font-weight:400; font-size:11px; margin-left:8px;'>· 거시 → 섹터 → 종목 → 타이밍</span></div>", unsafe_allow_html=True)
@@ -3755,6 +3734,7 @@ try:
     if use_macd: inds.append('MACD')
     if use_obv: inds.append('OBV')
 
+    sim = None  # 통합 박스에서 사용
     if not inds:
         st.warning("최소 1개 이상의 지표를 선택하세요")
     else:
@@ -3816,6 +3796,44 @@ try:
             st.dataframe(sim_df, use_container_width=True, hide_index=True)
             st.caption("💡 과거 패턴 기반 참고 통계입니다 · 투자 판단과 책임은 사용자에게 있습니다")
 
+    # ===== 🎯 종목 분석 통합 결론 =====
+    st.markdown("---")
+    integ = integrate_stock_signals(rec, target, patterns, hist, ma_data, accu_avg, sim)
+    v_name, v_cls, v_desc = integ["verdict"]
+
+    st.markdown(f"<div class='section-h'>🎯 종목 분석 통합 결론 <span style='color:#6b7280; font-weight:400; font-size:11px; margin-left:8px;'>· 6개 지표 일관성 진단</span></div>", unsafe_allow_html=True)
+
+    # 메인 결론 박스 + 투표 분포 바
+    bar_color = "#4ade80" if v_cls == "pos" else "#f87171" if v_cls == "neg" else "#fbbf24"
+    st.markdown(f"""<div class='card' style='padding:22px 26px; border-left:4px solid {bar_color}; margin-bottom:12px;'>
+    <div style='display:flex; justify-content:space-between; align-items:start; margin-bottom:14px;'>
+    <div>
+    <div style='font-size:11px; color:#6b7280; letter-spacing:0.1em; font-weight:600; margin-bottom:4px;'>📊 6개 지표 통합 진단</div>
+    <div class='{v_cls}' style='font-size:24px; font-weight:900;'>{v_name}</div>
+    <div style='color:#cbd5e1; font-size:12px; margin-top:4px;'>{v_desc}</div>
+    </div>
+    </div>
+    <div style='display:flex; background:#0a0c12; border-radius:8px; height:32px; overflow:hidden; margin-top:14px;'>
+    <div style='width:{integ["buy_pct"]}%; background:#15803d; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:12px; min-width:0;'>{f"매수 {integ['votes']['매수']}" if integ['buy_pct']>=12 else ''}</div>
+    <div style='width:{integ["hold_pct"]}%; background:#a16207; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:12px; min-width:0;'>{f"관망 {integ['votes']['관망']}" if integ['hold_pct']>=12 else ''}</div>
+    <div style='width:{integ["sell_pct"]}%; background:#991b1b; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:12px; min-width:0;'>{f"매도 {integ['votes']['매도']}" if integ['sell_pct']>=12 else ''}</div>
+    </div>
+    </div>""", unsafe_allow_html=True)
+
+    # 6개 지표 상세
+    detail_html = ""
+    for name, val, sig, cls in integ["details"]:
+        sig_bg = "#15803d" if cls == "pos" else "#991b1b" if cls == "neg" else "#a16207"
+        detail_html += f"""<div style='display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:#0a0c12; border-radius:6px; margin-bottom:6px;'>
+        <div>
+        <span style='color:#9ca3af; font-size:11px; font-weight:600;'>{name}</span>
+        <div style='color:#f1f5f9; font-size:13px; font-weight:700; margin-top:2px;'>{val}</div>
+        </div>
+        <span style='background:{sig_bg}; color:#fff; padding:4px 10px; border-radius:4px; font-size:11px; font-weight:700;'>{sig}</span>
+        </div>"""
+    st.markdown(f"<div>{detail_html}</div>", unsafe_allow_html=True)
+    st.caption("💡 6개 지표가 같은 방향을 가리킬 때(80%+) 신호가 가장 신뢰도 높음. 혼조시 분할 진입/축소로 리스크 분산.")
+
     # ===== 경제 위험도 분석 (인플레 + 경기침체 통합) =====
     st.markdown("---")
     st.markdown("<div class='section-h'>🌡️ 경제 위험도 종합 분석 <span style='color:#64748b; font-weight:500; font-size:11px; margin-left:8px;'>· 인플레 + 경기침체 + 스태그플레이션</span></div>", unsafe_allow_html=True)
@@ -3838,6 +3856,8 @@ try:
         inf_factor_html = ""
         for name, val, status, cls in eco["inf_factors"]:
             inf_factor_html += f"<div style='display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed #334155;'><span style='color:#94a3b8; font-size:13px;'>{name}</span><span><b style='color:#f1f5f9;'>{val}</b> <span class='{cls}' style='font-size:11px; margin-left:6px;'>{status}</span></span></div>"
+        if not inf_factor_html:
+            inf_factor_html = "<div style='color:#6b7280; font-size:12px; padding:8px 0;'>FRED CPI/Core CPI/PPI/PCE 데이터 일시 수집 불가 - 새로고침 시도</div>"
         st.markdown(f"""<div class='card' style='padding:18px 22px;'>
         <div style='display:flex; justify-content:space-between; align-items:baseline; margin-bottom:14px;'>
         <span style='color:#94a3b8; font-weight:700; font-size:13px;'>🔥 인플레이션 위험도</span>
@@ -3850,6 +3870,8 @@ try:
         rec_factor_html = ""
         for name, val, status, cls in eco["rec_factors"]:
             rec_factor_html += f"<div style='display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed #334155;'><span style='color:#94a3b8; font-size:13px;'>{name}</span><span><b style='color:#f1f5f9;'>{val}</b> <span class='{cls}' style='font-size:11px; margin-left:6px;'>{status}</span></span></div>"
+        if not rec_factor_html:
+            rec_factor_html = "<div style='color:#6b7280; font-size:12px; padding:8px 0;'>경기침체 지표 데이터 수집 불가</div>"
         st.markdown(f"""<div class='card' style='padding:18px 22px;'>
         <div style='display:flex; justify-content:space-between; align-items:baseline; margin-bottom:14px;'>
         <span style='color:#94a3b8; font-weight:700; font-size:13px;'>📉 경기침체 위험도</span>
