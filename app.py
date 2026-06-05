@@ -1164,17 +1164,25 @@ def find_poc(h, bins=20):
     if len(h) < 30: return None, 50, "데이터 부족"
     sample = h.iloc[-120:] if len(h) >= 120 else h
     low, high = sample['Low'].min(), sample['High'].max()
-    if low >= high: return None, 50, "측정 불가"
+    if pd.isna(low) or pd.isna(high) or low >= high:
+        return None, 50, "측정 불가"
     bin_edges = np.linspace(low, high, bins + 1)
     vol_at_price = np.zeros(bins)
     for i in range(len(sample)):
         p = sample['Close'].iloc[i]
         v = sample['Volume'].iloc[i]
-        idx = min(int((p - low) / (high - low) * bins), bins - 1)
-        if idx >= 0: vol_at_price[idx] += v
+        if pd.isna(p) or pd.isna(v): continue
+        try:
+            idx = min(int((p - low) / (high - low) * bins), bins - 1)
+            if idx >= 0: vol_at_price[idx] += v
+        except (ValueError, OverflowError):
+            continue
+    if vol_at_price.sum() == 0:
+        return None, 50, "거래량 데이터 없음"
     poc_idx = int(np.argmax(vol_at_price))
     poc_price = (bin_edges[poc_idx] + bin_edges[poc_idx + 1]) / 2
     curr = h['Close'].iloc[-1]
+    if pd.isna(curr): return poc_price, 50, "현재가 없음"
     dist = (curr - poc_price) / poc_price * 100
     if -3 <= dist <= 3:
         return poc_price, 78, f"POC ${poc_price:,.2f} 근접 → 매집 진입구간"
