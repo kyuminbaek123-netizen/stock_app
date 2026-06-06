@@ -340,6 +340,13 @@ def get_macro_all():
     m["vix3m"] = yf_last("^VIX3M")                     # 3개월 VIX
     m["vvix"] = yf_last("^VVIX")                       # VIX의 변동성
     m["skew"] = yf_last("^SKEW")                       # 블랙스완 지수
+    m["ovx"] = yf_last("^OVX")                          # 유가 변동성 (인플레 신호)
+    # SPY 옵션 PCR (시장 전체 옵션 심리)
+    try:
+        spy_opt = get_option_chain("SPY")
+        m["spy_pcr"] = spy_opt["pcr"] if spy_opt else None
+    except Exception:
+        m["spy_pcr"] = None
     # YoY 변화율
     m["cpi_yoy_v"] = fred_yoy("CPIAUCSL")
     m["core_cpi_yoy"] = fred_yoy("CPILFESL")
@@ -714,19 +721,35 @@ def score_all(hist, info, patterns, macro, is_kr=False):
     # 8. VIX (+ 기간구조 백워데이션 + SKEW 반영)
     vix = macro.get("vix", (None, None))[0]
     if vix:
-        if vix < 15: s["VIX"] = 70; reasons_p.append(f"VIX {vix:.1f} - 안정")
-        elif vix < 20: s["VIX"] = 60
-        elif vix < 30: s["VIX"] = 40; reasons_n.append(f"VIX {vix:.1f} - 변동성↑")
-        else: s["VIX"] = 20; reasons_n.append(f"VIX {vix:.1f} - 극단공포")
-        # 백워데이션(단기>장기)이면 위험 = 점수 깎기
+        if vix < 14: s["VIX"] = 75; reasons_p.append(f"VIX {vix:.1f} - 매우안정")
+        elif vix < 17: s["VIX"] = 65; reasons_p.append(f"VIX {vix:.1f} - 안정")
+        elif vix < 20: s["VIX"] = 55
+        elif vix < 25: s["VIX"] = 40; reasons_n.append(f"VIX {vix:.1f} - 경계")
+        elif vix < 30: s["VIX"] = 28; reasons_n.append(f"VIX {vix:.1f} - 변동성↑")
+        else: s["VIX"] = 15; reasons_n.append(f"VIX {vix:.1f} - 극단공포")
+        # 백워데이션
         vix9d = macro.get("vix9d", (None, None))[0]
         vix3m = macro.get("vix3m", (None, None))[0]
         if vix9d and vix3m and vix9d > vix3m:
-            s["VIX"] = max(15, s["VIX"] - 20); reasons_n.append("VIX 백워데이션 - 시장 균열 신호")
-        # SKEW 높으면 블랙스완 헤지 급증
+            s["VIX"] = max(10, s["VIX"] - 22); reasons_n.append("VIX 백워데이션 - 시장 균열")
+        # SKEW
         skew = macro.get("skew", (None, None))[0]
-        if skew and skew > 145:
-            s["VIX"] = max(15, s["VIX"] - 8); reasons_n.append(f"SKEW {skew:.0f} - 큰손 폭락대비")
+        if skew:
+            if skew > 150: s["VIX"] = max(10, s["VIX"] - 12); reasons_n.append(f"SKEW {skew:.0f} - 블랙스완 경계")
+            elif skew > 145: s["VIX"] = max(10, s["VIX"] - 8); reasons_n.append(f"SKEW {skew:.0f} - 헤지급증")
+            elif skew > 140: s["VIX"] = max(10, s["VIX"] - 4)
+        # VVIX
+        vvix = macro.get("vvix", (None, None))[0]
+        if vvix and vvix > 105:
+            s["VIX"] = max(10, s["VIX"] - 5); reasons_n.append(f"VVIX {vvix:.0f} - 옵션불안")
+        # OVX 인플레 충격
+        ovx = macro.get("ovx", (None, None))[0]
+        if ovx and ovx > 50:
+            s["VIX"] = max(10, s["VIX"] - 4); reasons_n.append(f"OVX {ovx:.0f} - 유가충격")
+        # SPY PCR
+        spy_pcr = macro.get("spy_pcr")
+        if spy_pcr and spy_pcr > 1.2:
+            s["VIX"] = max(10, s["VIX"] - 5); reasons_n.append(f"SPY PCR {spy_pcr:.2f} - 폭락헤지")
     else:
         s["VIX"] = 50
 
@@ -2221,9 +2244,9 @@ def fed_scenarios(market_score, inf_score, rec_score):
 def combined_diagnosis(market_score, inf_score, rec_score):
     """시장 상황 + 인플레 + 침체 조합 → 과거 사례 기반 진단"""
     # 시장 강도
-    if market_score >= 65: mkt_state = "강세"
-    elif market_score >= 50: mkt_state = "중립우호"
-    elif market_score >= 35: mkt_state = "혼조"
+    if market_score >= 70: mkt_state = "강세"
+    elif market_score >= 55: mkt_state = "중립우호"
+    elif market_score >= 40: mkt_state = "혼조"
     else: mkt_state = "약세"
 
     # 인플레 강도
@@ -2325,21 +2348,40 @@ def make_market_summary(macro, breadth=None, sp_trend=None, ndx_trend=None):
     # 1. VIX (가중치 高)
     vix = macro.get("vix", (None, None))[0]
     if vix:
-        if vix < 15: positives.append("VIX 안정 (15↓)"); weighted_score += 6
-        elif vix < 18: positives.append("VIX 양호"); weighted_score += 3
-        elif vix > 30: negatives.append("VIX 극단 (공포)"); weighted_score -= 10
-        elif vix > 25: negatives.append("VIX 변동성 확대"); weighted_score -= 6
-        elif vix > 20: negatives.append("VIX 경계"); weighted_score -= 3
+        if vix < 14: positives.append("VIX 매우 안정"); weighted_score += 6
+        elif vix < 17: positives.append("VIX 안정"); weighted_score += 3
+        elif vix > 30: negatives.append("VIX 극단 (공포)"); weighted_score -= 12
+        elif vix > 25: negatives.append("VIX 변동성 확대"); weighted_score -= 8
+        elif vix > 20: negatives.append("VIX 경계"); weighted_score -= 5
+        elif vix > 18: negatives.append("VIX 상승"); weighted_score -= 2
         # VIX 백워데이션 (단기>장기) = 즉각 위험
         vix9d = macro.get("vix9d", (None, None))[0]
         vix3m = macro.get("vix3m", (None, None))[0]
         if vix9d and vix3m:
             if vix9d > vix3m:
-                negatives.append("VIX 백워데이션 - 시장 균열"); weighted_score -= 8
-        # SKEW 블랙스완
+                negatives.append("VIX 백워데이션 - 시장 균열"); weighted_score -= 10
+        # SKEW 블랙스완 (가중치 ↑)
         skew = macro.get("skew", (None, None))[0]
-        if skew and skew > 145:
-            negatives.append(f"SKEW {skew:.0f} - 큰손 폭락대비"); weighted_score -= 4
+        if skew:
+            if skew > 150: negatives.append(f"SKEW {skew:.0f} - 블랙스완 경계"); weighted_score -= 8
+            elif skew > 145: negatives.append(f"SKEW {skew:.0f} - 꼬리위험 헤지↑"); weighted_score -= 5
+            elif skew > 140: negatives.append(f"SKEW {skew:.0f} - 헤지 증가"); weighted_score -= 3
+        # VVIX
+        vvix = macro.get("vvix", (None, None))[0]
+        if vvix:
+            if vvix > 110: negatives.append(f"VVIX {vvix:.0f} - 옵션시장 불안"); weighted_score -= 4
+            elif vvix > 100: negatives.append(f"VVIX {vvix:.0f} - 변동성↑"); weighted_score -= 2
+        # OVX (유가변동성 → 인플레 충격 신호)
+        ovx = macro.get("ovx", (None, None))[0]
+        if ovx:
+            if ovx > 50: negatives.append(f"OVX {ovx:.0f} - 유가 충격 위험"); weighted_score -= 5
+            elif ovx > 40: negatives.append(f"OVX {ovx:.0f} - 유가 불안"); weighted_score -= 2
+        # SPY PCR (옵션 심리)
+        spy_pcr = macro.get("spy_pcr")
+        if spy_pcr:
+            if spy_pcr > 1.3: negatives.append(f"SPY PCR {spy_pcr:.2f} - 폭락 헤지 급증"); weighted_score -= 5
+            elif spy_pcr > 1.0: negatives.append(f"SPY PCR {spy_pcr:.2f} - 방어 심리"); weighted_score -= 2
+            elif spy_pcr < 0.7: positives.append(f"SPY PCR {spy_pcr:.2f} - 콜 우세"); weighted_score += 3
 
     # 2. 공포탐욕 (가중치 中)
     fg = macro.get("fg", (None, None))[0]
@@ -2370,12 +2412,14 @@ def make_market_summary(macro, breadth=None, sp_trend=None, ndx_trend=None):
         if rr > 2.5: negatives.append(f"실질금리 {rr:.2f}% - 밸류 부담"); weighted_score -= 6
         elif rr < 1: positives.append(f"실질금리 {rr:.2f}% - 우호"); weighted_score += 3
 
-    # 5. 하이일드 스프레드 (신용 리스크)
+    # 5. 하이일드 스프레드 (신용 리스크) - 임계값 강화
     hy = macro.get("hy_spread", (None, None))[0]
     if hy:
-        if hy < 3: positives.append("신용시장 안정"); weighted_score += 4
-        elif hy > 6: negatives.append("신용경색 심각"); weighted_score -= 8
-        elif hy > 5: negatives.append("신용 스프레드 확대"); weighted_score -= 4
+        if hy < 2.8: positives.append(f"HY {hy:.2f}% - 신용 매우안정"); weighted_score += 4
+        elif hy < 3.5: positives.append(f"HY {hy:.2f}% - 신용안정"); weighted_score += 2
+        elif hy > 6: negatives.append(f"HY {hy:.2f}% - 신용경색"); weighted_score -= 10
+        elif hy > 5: negatives.append(f"HY {hy:.2f}% - 스프레드 확대"); weighted_score -= 6
+        elif hy > 4: negatives.append(f"HY {hy:.2f}% - 경계"); weighted_score -= 3
 
     # 6. 유동성 (연준 자산)
     fa = macro.get("fed_assets", (None, None))
@@ -2433,8 +2477,8 @@ def make_market_summary(macro, breadth=None, sp_trend=None, ndx_trend=None):
 
     if score >= 75: verdict, vcls = "위험자산 우호", "pos"
     elif score >= 60: verdict, vcls = "중립적 우호", "pos"
-    elif score >= 45: verdict, vcls = "혼조", "warn"
-    elif score >= 30: verdict, vcls = "방어적", "neg"
+    elif score >= 50: verdict, vcls = "혼조", "warn"
+    elif score >= 35: verdict, vcls = "방어적", "neg"
     else: verdict, vcls = "위험회피 국면", "neg"
 
     return {"score": score, "verdict": verdict, "vcls": vcls,
@@ -2859,6 +2903,19 @@ try:
             st.error("⚠️ 데이터를 불러올 수 없습니다. 티커가 틀렸거나, Yahoo Finance가 일시적으로 요청을 차단(Rate Limit)했을 수 있습니다.")
             st.info("💡 잠시 (1~2분) 기다린 후 다시 시도하거나, 페이지를 새로고침 해주세요.")
             st.stop()
+        # NaN 처리: 가격 행 ffill (직전 값으로 채움) + 그래도 비면 행 제거
+        price_cols = ['Open', 'High', 'Low', 'Close']
+        for c in price_cols:
+            if c in hist.columns:
+                hist[c] = hist[c].ffill().bfill()
+        if 'Volume' in hist.columns:
+            hist['Volume'] = hist['Volume'].fillna(0)
+        hist = hist.dropna(subset=['Close']).copy()
+        # 마지막 가격 확인
+        if hist.empty or pd.isna(hist['Close'].iloc[-1]) or hist['Close'].iloc[-1] <= 0:
+            st.error("⚠️ 가격 데이터가 비어있습니다. 신규 상장주거나 거래정지/지원되지 않는 종목일 수 있습니다.")
+            st.info("💡 다른 티커를 시도해보세요. (예: NVDA, TSLA, 005930.KS)")
+            st.stop()
         hist = compute_indicators(hist)
         patterns = detect_patterns(hist['Close'])
         macro = get_macro_all()
@@ -2983,6 +3040,42 @@ try:
                 <div class='card-value' style='color:#6b7280;'>N/A</div>
                 <div class='card-sub'>데이터 수집 중</div></div>""", unsafe_allow_html=True)
         st.caption("💡 **백워데이션**(단기VIX>장기VIX)은 즉각적 시장 균열 신호. **VVIX**↑는 옵션시장 불안. **SKEW**↑는 큰손들이 폭락 보험(OTM 풋)을 비싸게 사들이는 중 = 꼬리위험 경계.")
+
+        # 옵션 심리 (OVX + SPY PCR)
+        ovx = macro.get("ovx", (None, None))[0]
+        spy_pcr = macro.get("spy_pcr")
+        op1, op2 = st.columns(2)
+        with op1:
+            if ovx:
+                if ovx > 50: oc, od = "neg", "원유 변동성 폭증 - 인플레 충격 가능"
+                elif ovx > 40: oc, od = "warn", "유가 불안정"
+                else: oc, od = "pos", "유가 안정"
+                st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid {"#f87171" if oc=="neg" else "#fbbf24" if oc=="warn" else "#4ade80"};'>
+                <div class='card-title'>OVX (유가 변동성)</div>
+                <div class='card-value {oc}'>{ovx:.1f}</div>
+                <div class='card-sub'>{od}</div>
+                </div>""", unsafe_allow_html=True)
+            else:
+                st.markdown(f"""<div class='card' style='padding:18px 22px;'>
+                <div class='card-title'>OVX</div>
+                <div class='card-value' style='color:#6b7280;'>N/A</div>
+                <div class='card-sub'>데이터 수집 중</div></div>""", unsafe_allow_html=True)
+        with op2:
+            if spy_pcr:
+                if spy_pcr > 1.3: pc, pd_ = "neg", "풋 우세 - 시장 폭락 헤지 급증"
+                elif spy_pcr > 1.0: pc, pd_ = "warn", "풋 약우세 - 방어 심리"
+                elif spy_pcr > 0.8: pc, pd_ = "warn", "중립"
+                else: pc, pd_ = "pos", "콜 우세 - 상승 기대"
+                st.markdown(f"""<div class='card' style='padding:18px 22px; border-left:3px solid {"#f87171" if pc=="neg" else "#fbbf24" if pc=="warn" else "#4ade80"};'>
+                <div class='card-title'>SPY 옵션 PCR</div>
+                <div class='card-value {pc}'>{spy_pcr:.2f}</div>
+                <div class='card-sub'>{pd_}</div>
+                </div>""", unsafe_allow_html=True)
+            else:
+                st.markdown(f"""<div class='card' style='padding:18px 22px;'>
+                <div class='card-title'>SPY 옵션 PCR</div>
+                <div class='card-value' style='color:#6b7280;'>N/A</div>
+                <div class='card-sub'>데이터 수집 중</div></div>""", unsafe_allow_html=True)
 
     # ===== 매크로 (환율, 금리, 유가) =====
     st.markdown("<div class='section-h'>🌍 매크로</div>", unsafe_allow_html=True)
